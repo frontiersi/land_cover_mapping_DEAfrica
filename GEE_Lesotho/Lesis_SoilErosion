@@ -1,0 +1,137 @@
+var RUSLEFactors = require('users/soilwatch/soilErosionApp:RUSLE_factors.js');
+var S2Masks = require('users/soilwatch/soilErosionApp:s2_masks.js');
+var S2FCover = require('users/soilwatch/soilErosionApp:s2_fcover.js');
+var composites = require('users/soilwatch/soilErosionApp:composites.js');
+var palettes = require('users/gena/packages:palettes');
+
+var year = '2019';
+
+var country = ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_boundaries");
+var not_water = ee.Image("JRC/GSW1_2/GlobalSurfaceWater").select('max_extent').eq(0); // JRC Global Surface Water mask
+// Combine JRC builtup and facebook population as builtup mask
+var wsf2019 = ee.ImageCollection("projects/sat-io/open-datasets/WSF/WSF_2019").mosaic();
+var not_builtup = wsf2019.unmask(0).neq(255);
+
+var dem = ee.ImageCollection("projects/sat-io/open-datasets/FABDEM");
+var dem_proj = dem.first().projection();
+dem = dem.mosaic().setDefaultProjection(dem_proj);
+
+var slope_deg = ee.Terrain.slope(dem);
+var slope_perc = slope_deg.tan().multiply(100);
+var slope_rad = slope_deg.multiply(ee.Image(Math.PI).divide(180));
+var slope_aspect = ee.Terrain.aspect(dem);
+
+// Compute the low-resolution factors (based on 30-250m covariates) of the RUSLE equation
+var R = RUSLEFactors.factorR();
+var LS = RUSLEFactors.factorLS(slope_deg, slope_rad, slope_aspect);
+
+// Compute the low-resolution factors (based on 30-250m covariates) of the RUSLE equation
+var K = ee.Image('users/soilwatch/Lesotho/erodibility_K').divide(10);
+
+var cons_prac = ee.Image('users/soilwatch/Lesotho/dominant_conservation_practices');
+var P_slope = cons_prac.eq(2).and(slope_perc.gte(9)).and(slope_perc.lte(12.5)).multiply(0.6)
+    .add(cons_prac.eq(2).and(slope_perc.gt(12.5)).and(slope_perc.lte(16.5)).multiply(0.7))
+    .add(cons_prac.eq(2).and(slope_perc.gt(16.5)).and(slope_perc.lte(20.5)).multiply(0.8))
+    .add(cons_prac.eq(2).and(slope_perc.gt(20.5)).and(slope_perc.lte(25.5)).multiply(0.9))
+    .add(cons_prac.eq(2).and(slope_perc.gt(25.5)).multiply(0.95))
+    .selfMask();
+
+var P_stone = cons_prac.eq(1).or(cons_prac.eq(11)).or(cons_prac.eq(12)).multiply(0.317).selfMask();
+var P_grass = cons_prac.eq(10).or(cons_prac.eq(5)).or(cons_prac.eq(6)).or(cons_prac.eq(2)).or(cons_prac.eq(4)).multiply(0.660).selfMask();
+
+var P = P_slope.unmask(1).multiply(P_stone.unmask(1)).multiply(P_grass.unmask(1));
+
+var date_range = ee.Dictionary({'start': year + '-01-01', 'end': year + '-12-31'});
+
+// Load the Sentinel-2 collection for the time period and area requested
+var s2_cl = S2Masks.loadImageCollection(ee.ImageCollection("COPERNICUS/S2_SR"), date_range, country.geometry());
+
+// Perform cloud masking using the S2 cloud probabilities assets from s2cloudless,
+// courtesy of Sentinelhub/EU/Copernicus/ESA
+var masked_collection = s2_cl.filter(ee.Filter.notNull(['MEAN_INCIDENCE_AZIMUTH_ANGLE_B3',
+                                                        'MEAN_INCIDENCE_AZIMUTH_ANGLE_B4',
+                                                        'MEAN_INCIDENCE_AZIMUTH_ANGLE_B5',
+                                                        'MEAN_INCIDENCE_AZIMUTH_ANGLE_B6',
+                                                        'MEAN_INCIDENCE_AZIMUTH_ANGLE_B7',
+                                                        'MEAN_INCIDENCE_AZIMUTH_ANGLE_B8A',
+                                                        'MEAN_INCIDENCE_AZIMUTH_ANGLE_B11',
+                                                        'MEAN_INCIDENCE_AZIMUTH_ANGLE_B12',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B3',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B4',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B5',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B6',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B7',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B8A',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B11',
+                                                        'MEAN_INCIDENCE_ZENITH_ANGLE_B12',
+                                                        'MEAN_SOLAR_AZIMUTH_ANGLE',
+                                                        'MEAN_SOLAR_ZENITH_ANGLE']))
+                        .map(S2Masks.addCloudShadowMask(not_water, 1e4))
+                        .map(S2Masks.applyCloudShadowMask)
+                        .map(S2FCover.fcover(1e4)) // compute fcover, making sure above angle properties exist
+                        .select(['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12', 'fcover']);
+
+// Apply bare soil filter using the GEOS3 algorithm
+var bs_collection = masked_collection.map(function(img){var geos3 = S2Masks.addGEOS3Mask(img);
+                                                        return img.updateMask(geos3)});
+
+// Specify band list required for the plots to generate
+var band_list = ['fcover'];
+
+// Generate a list of time intervals for which to generate a harmonized time series
+var time_intervals = composites.extractTimeRanges(date_range.get('start'), date_range.get('end'), 30);
+
+// Generate harmonized monthly time series of FCover as input to the vegetation factor V
+var fcover_ts = composites.harmonizedTS(masked_collection, band_list, time_intervals, {agg_type: 'geomedian'});
+// Run a harmonic regression on the time series to fill missing data gaps and smoothen the NDVI profile.
+var fcover_ts_smooth = composites.harmonicRegression(fcover_ts, 'fcover', 4)
+                                 // clamping to [0,10000] data range,
+                                 // as harmonic regression may shoot out of data range
+                                 .map(function(img){return img.clamp(0, 1e4).toInt16()});
+
+// Calculate the bare soil frequency,
+// i.e. the number of bare soil observations divided by the number of cloud-free observations
+var bs_freq = bs_collection.select('B2').count()
+              .divide(masked_collection.select('B2').count())
+              .rename('bare_soil_frequency')
+              .clip(country.geometry())
+              .unmask(0)
+              // Masking out the following: water, built-up, too steep slopes
+              .updateMask(not_water.and(not_builtup));
+
+var fcover_arr = fcover_ts_smooth.select('fcover').toArray();
+
+var pw_mean = fcover_arr.arraySlice(0,1).add(fcover_arr.arraySlice(0,0,-1)).divide(2);
+var fcover_integ = pw_mean.arrayReduce('mean',[0]).abs().toArray()
+                          .arraySlice(0, 0, 1).arrayProject([0]).arrayFlatten([['array']]);
+
+var V = ee.Image(1).subtract(bs_freq).multiply(10).clamp(5, 8).multiply(fcover_integ.divide(1e4)).exp();
+// The final Sustainability Factor S = 1 / (V*L)
+var S = P.divide(V).rename('sustainability_factor');
+
+var A = R
+       .multiply(K)
+       .multiply(LS)
+       .multiply(S)
+       .rename('soil_erosion_hazard');
+
+var A_palette = palettes.colorbrewer.YlOrBr[9].reverse().slice(0,-1);
+var S_palette = palettes.colorbrewer.RdYlGn[11].reverse().slice(2, -1);
+
+A = ee.Image('users/ocsgeospatial/Lesotho/soil_erosion_lesotho_lesis2019_fabdem');
+
+Map.centerObject(country);
+Map.addLayer(country, {}, 'country boundaries')
+Map.addLayer(S.clip(country.geometry()), {min:0, max:1, palette: S_palette}, 'S factor (cover + management factor combined)');
+Map.addLayer(A.clip(country.geometry()), {min:0, max:100, palette: A_palette}, 'soil erosion rate A (t.ha-1.yr-1)', true, 1);
+
+Export.image.toAsset({
+  image: A.toFloat().clip(country.geometry()),
+  scale: 10,
+  crs: 'EPSG:4326',
+  assetId: 'users/ocsgeospatial/Lesotho/soil_erosion',
+  maxPixels: 1e13,
+  description: 'soil_erosion_lesotho_lesis2019_fabdem',
+  pyramidingPolicy: 'MEAN',
+  region: country.geometry()
+});
