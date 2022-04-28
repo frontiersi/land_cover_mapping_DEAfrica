@@ -5,5 +5,6 @@ This repository contains codes and data for land cover mapping of Lesotho using 
 
 ## List of folders and files
 - Supplementary_Data: folder containing shapefiles used for pre-/post-processing
-- modules: folder containing Python script modules
-- notebooks: folder containing Jupyter Notebooks demonstrating the classification workflow
+- modules: Python script modules for processing
+- notebooks: Jupyter Notebooks demonstrating the classification workflow
+- GEE_Lesotho: a copy of the GEE JavaScript repository provided by FAO
