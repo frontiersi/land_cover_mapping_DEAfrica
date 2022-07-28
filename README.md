@@ -1,4 +1,4 @@
-# land_cover_mapping_Lesotho
+# land_cover_mapping_DEAfrica
 
 ## What this repository does
 This repository contains codes and data for land cover mapping of Lesotho using DE Africa Sandbox and Sentinel-2 satellite images of year 2021. The python codes are migrated from a JavaScript repository in GEE provided by Food and Agriculture (FAO). Training and supplementary data are also provided by FAO.
