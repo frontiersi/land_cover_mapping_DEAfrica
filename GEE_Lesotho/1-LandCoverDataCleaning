@@ -4,16 +4,20 @@
 // This workbench is intended to clean up the training data using Kmeans clustering and filtering out 
 // the training data points which are likely to no longer belong to a given land cover class 
 
+var params = require('users/ocsgeospatial/Lesotho:6-Parameters.js');
+var legend_utils = require('users/ocsgeospatial/Lesotho:8-LegendUtils.js');
+var LCParams = params.LCParams();
+
 // Input data parameters for the land cover classification
 // ****************************************************************************************************************** //
-var CLASS_NAME = 'LC_Class_I'; // Property name of the feature collection containing the crop type class attribute
-var AGG_INTERVAL = 364/6; // Number of days to use to create the temporal composite for 2020
-var S2_COLLECTION = 'COPERNICUS/S2'; // Whether to use L1C (S2) or L2A (S2_SR) data. L2A data is available from 2019 onwards.
-var S2_BAND_LIST = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B11', 'B12', 'NDVI']; // S2 Bands to use as DTW input
+var CLASS_NAME = LCParams['CLASS_NAME']; // Property name of the feature collection containing the crop type class attribute
+var AGG_INTERVAL = LCParams['AGG_INTERVAL']; // Number of days to use to create the temporal composite for 2020
+var S2_COLLECTION = LCParams['COLLECTION']; // Whether to use L1C (S2) or L2A (S2_SR) data. L2A data is available from 2019 onwards.
+var S2_BAND_LIST = LCParams['BAND_LIST']; // S2 Bands to use as DTW input
 var BAND_NO = S2_BAND_LIST.length; // Number of bands to use for the DTW. 
                                    // The default 7 bands are: S2 NDVI, S2 B2, S2 B3, S2 B11, S2 B12, S1 VV, S1 VH
-var YEAR = '2021'; // The year for which to clean up the training dataset.
-var VERSION_NO = 'v1'; // Version number of the land cover outputs produced
+var YEAR = LCParams['TD_CLEANUP_YEAR']; // The year for which to clean up the training dataset.
+var VERSION_NO = LCParams['VERSION_NO']; // Version number of the land cover outputs produced
 // ****************************************************************************************************************** //
 
 // Lesotho boundaries to use
@@ -68,63 +72,9 @@ var palette = palettes.misc.tol_rainbow[7];
 
 // Land Cover Classes dictionary
 // The classes commented out are not explicitly mapped for the new LCDB, but are introduced at a later stage of the processs
-var lc_classes = {
-  'Urban': 1,
-  'Cropland': 2,
-  //'Cropland Degraded': 3,
-  'Forest': 4,
-  //'Broadleaf': 5,
-  'Water Bodies': 6,
-  'Wetland': 7,
-  //'River Bank': 8,
-  'Shrubland': 9,
-  'Grassland': 10,
-  //'Grassland Degraded': 11,
-  'Bare Surfaces': 12,
-  //'Mines': 13,
-  'Irrigated Cropland': 14,
-  //'Gullies': 15
-} 
-
-/*
+var lc_classes = LCParams['LC_CLASSES'];
 // The corresponding color hex keys for the land cover classes
-var classification_palette = [
-  '#ea3f42', // 1.urban
-  '#fbd278', // 2.croplands
-  '#fbd278', // 3. degraded crop
-  '#527300', // 4. needleleaf
-  '#527300', // 5. broadleaf
-  '#164fab', // 6. water
-  '#7db4ff', // 7. wetlands
-  '#164fab',  // 8. river banks
-  '#a4e400', // 9. shrub
-  '#d8febc',  // 10. grass
-  '#d8febc', //11. degraded grass
-  '#fffebb', // 12. barren
-  '#fffebb', // 13. mine
-  '#95dfa5', // 14. Irrigated Cropland
-  '#a4651d' // 15. Gullies
-];
-*/
-
-// The corresponding color hex keys for the land cover classes
-var classification_palette = [
-  '#ff1411', // 1.urban
-  '#fff78f', // 2.croplands
-  '#fbd278', // 3. degraded crop
-  '#4e8845', // 4. needleleaf
-  '#527300', // 5. broadleaf
-  '#005b85', // 6. water
-  '#68b6e5', // 7. wetlands
-  '#164fab',  // 8. river banks
-  '#c78d36', // 9. shrub
-  '#d6e591',  // 10. grass
-  '#d8febc', //11. degraded grass
-  '#9ba7a0', // 12. barren
-  '#fffebb', // 13. mine
-  '#95dfa5', // 14. Irrigated Cropland
-  '#562118' // 15. Gullies
-];
+var classification_palette = LCParams['LC_PALETTE'];
 
 
 // A function to calculate NDVI
@@ -260,7 +210,7 @@ var histogram = ui.Chart.image.histogram({
   
 // Display the histogram.
 print(histogram);
-print("cluster sizes:")
+print("Cluster Sizes:")
 print(result.reduceRegion({reducer: ee.Reducer.frequencyHistogram(), geometry: lesotho_boundaries.geometry(), scale:40, maxPixels:1e13, tileScale:4}))
   
 // Function to clean up training data based on the produced clusters
@@ -336,6 +286,37 @@ Map.addLayer(styled_td.style({styleProperty: "style"}), {}, 'land cover referenc
 // Export the data to an asset
 Export.table.toAsset({
   collection: filtered_td,
-  description: 'trainingData'+YEAR,
-  assetId: 'users/ocsgeospatial/Lesotho/trainingData'+YEAR+'_'+VERSION_NO
+  description: 'trainingData'+YEAR+VERSION_NO,
+  assetId: 'users/ocsgeospatial/Lesotho/trainingData'+YEAR+VERSION_NO
 });
+
+// Create a legend for the different crop types
+// set position of panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Create legend title
+var legendTitle = ui.Label({
+  value: 'Legend',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+
+// Add the title to the panel
+legend.add(legendTitle);
+
+// Add color and and names
+for (var i = 0; i <= classification_palette.length-1; i++) {
+  legend.add(legend_utils.makeRow(classification_palette[i], Object.keys(lc_classes)[i]));
+  }
+
+// add legend to map (alternatively you can also print the legend to the console)
+Map.add(legend);

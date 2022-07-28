@@ -5,23 +5,22 @@
 // reduce the commission errors of certain classes on the basis of external datasets (e.g. WSF, Google Open Buildings)
 // Moreover, the irrigated croplands and gullies are produced as part of this workbench and integrated into the land cover
 
+var params = require('users/ocsgeospatial/Lesotho:6-Parameters.js');
+var legend_utils = require('users/ocsgeospatial/Lesotho:8-LegendUtils.js');
+var LCParams = params.LCParams();
+
 // ****************************************************************************************************************** //
-var CLASS_NAME = 'LC_Class_I'; // Property name of the feature collection containing the crop type class attribute
-var AGG_INTERVAL = 364/6; // Number of days to use to create the temporal composite for 2020
-var S2_BAND_LIST = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12', 'NDVI']; // S2 Bands to use as DTW input
-var VERSION_NO = 'v3'; // Version number of the land cover outputs produced
-var ALGO = 'RF'; // Algorithm to apply. Default is Random Forest, as sufficient training data is available for 2021.
+var CLASS_NAME = LCParams['CLASS_NAME']; // Property name of the feature collection containing the crop type class attribute
+var AGG_INTERVAL = LCParams['AGG_INTERVAL']; // Number of days to use to create the temporal composite for 2020
+var S2_BAND_LIST = LCParams['BAND_LIST']; // S2 Bands to use as DTW input
+var VERSION_NO = LCParams['VERSION_NO']; // Version number of the land cover outputs produced
+var ALGO = LCParams['ALGO']; // Algorithm to apply. Default is Random Forest, as sufficient training data is available for 2021.
 // ****************************************************************************************************************** //
 
 // A dictionary that will be iterated over for multi-year land cover mapping.
 // Comment out the years you do not wish to produce.
 // First element of the dictionary value is the collection name, Second element the irrigate agriculture cluster to select
-var year_dict = {'2017': ['COPERNICUS/S2', 2],
-                 '2018': ['COPERNICUS/S2', 2],
-                 '2019': ['COPERNICUS/S2', 1],
-                 '2020': ['COPERNICUS/S2', 1],
-                 '2021': ['COPERNICUS/S2', 1]
-                };
+var year_dict = LCParams['LC_YEARS'];
 
 // ****************************************************************************************************************** //
 // Import external dependencies
@@ -34,22 +33,7 @@ var composites = require('users/ocsgeospatial/functions:composites.js');
 var county = ee.Feature(ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_boundaries").first()).simplify(100);
 
 // Class list
-var classification_names = {'Urban': 1,
-                            'Cropland': 2,
-                            'Degraded Cropland': 3,
-                            'needleleaf': 4,
-                            'broadleaf': 5,
-                            'Water Body': 6,
-                            'Wetland': 7,
-                            'River Bank': 8,
-                            'Shrubland': 9,
-                            'Grassland': 10,
-                            'Degraded Grassland': 11,
-                            'Bare Surfaces': 12,
-                            'Mines': 13,
-                            'Irrigated Cropland': 14,
-                            'Gullies': 15
-                            };
+var lc_classes = LCParams['LC_CLASSES'];
 
 /*
 // Corresponding color palette for the mapped land cover/crop classes
@@ -73,30 +57,14 @@ var classification_palette = [
 */
 
 // The corresponding color hex keys for the land cover classes
-var palette = [
-  '#ff1411', // 1.urban
-  '#fff78f', // 2.croplands
-  '#fbd278', // 3. degraded crop
-  '#4e8845', // 4. needleleaf
-  '#527300', // 5. broadleaf
-  '#005b85', // 6. water
-  '#68b6e5', // 7. wetlands
-  '#164fab',  // 8. river banks
-  '#c78d36', // 9. shrub
-  '#d6e591',  // 10. grass
-  '#d8febc', //11. degraded grass
-  '#9ba7a0', // 12. barren
-  '#fffebb', // 13. mine
-  '#95dfa5', // 14. Irrigated Cropland
-  '#562118' // 15. Gullies
-];
-
+var classification_palette = LCParams['LC_PALETTE'];
+                
 // ****************************************************************************************************************** //
 
 // The monotemporal classification for 2021, prior to producing the harmonized time series
 var classification2021_mono = ee.Image('users/ocsgeospatial/Lesotho/rf_lesotho_s2_60_2021_postproc_new');
 // The first image in the time series (2017)
-var classification_postproc = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2017_'+VERSION_NO+'_harmonized');
+var classification_postproc = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2017'+VERSION_NO+'_harmonized');
 
 // The 2015 LCDB land cover dataset, remapped to the land cover nomenclature from 2021
 var classification2015 = ee.Image('users/ocsgeospatial/Lesotho/LCDB_Lesotho_v2_2')
@@ -226,7 +194,7 @@ Object.keys(year_dict).forEach(function(i) {
        //.merge(val_signatures_grassland);
   
   // Import the harmonized land cover data for the given year
-  var classification = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+'_'+VERSION_NO+'_harmonized');
+  var classification = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+VERSION_NO+'_harmonized');
   
   // Define the time range corresponding to the given year, to load data for the gullies and irrigated cropland classification
   var date_range = ee.Dictionary({'start': year +'-01-01', 'end': year + '-12-31'}); // Second half of year used only.
@@ -314,6 +282,10 @@ Object.keys(year_dict).forEach(function(i) {
     return previous.addBands(image);
   }, s2_stack);
   
+  var cluster_mean1 = ee.Number(s2_stack.select('NDVI_2').updateMask(result.eq(1)).reduceRegion({reducer: ee.Reducer.mean(), geometry: county.geometry(), scale: 250, tileScale: 4}).get('NDVI_2'));
+  var cluster_mean2 = ee.Number(s2_stack.select('NDVI_2').updateMask(result.eq(2)).reduceRegion({reducer: ee.Reducer.mean(), geometry: county.geometry(), scale: 250, tileScale: 4}).get('NDVI_2'));
+  var irr_cluster = ee.Number(ee.Algorithms.If(cluster_mean1.gt(cluster_mean2), 1, 2));
+  
   // Make the histogram, set the options.
   var histogram = ui.Chart.image.histogram({
     image: ee.Image(hist_image).select(key_list), 
@@ -336,7 +308,7 @@ Object.keys(year_dict).forEach(function(i) {
   
   // Only keep the irrigated pixels that have a Sentinel-2 NDVI integral > 5000 (scale 0-10000),
   // Have a height above nearest drainage of less than 45m, a slope < 10°
-  var irrigated_count = result.eq(year_dict[year][1]).and(s2_integ.gt(5000))
+  var irrigated_count = result.eq(irr_cluster).and(s2_integ.gt(5000))
                                     .and(slope.lte(10)).and(hand.lte(45)).selfMask().connectedPixelCount();
   
   // Generate the contrast and correlation metrics of the grey-level co-occurance matrix with a window size of 3 pixels (30m)
@@ -467,18 +439,18 @@ Object.keys(year_dict).forEach(function(i) {
   
   // Get a confusion matrix representing expected accuracy.
   var dtw_testAccuracy = validation_dtw.errorMatrix(CLASS_NAME, 'classification_'+year);
-  print('Validation error matrix for DTW: ', dtw_testAccuracy);
-  print('Validation producers accuracy for DTW: ', dtw_testAccuracy.producersAccuracy());
-  print('Validation consumers accuracy for DTW: ', dtw_testAccuracy.consumersAccuracy());
-  print('Validation overall accuracy for DTW: ', dtw_testAccuracy.accuracy());
-  print('Validation kappa index for DTW: ', dtw_testAccuracy.kappa());
+  print('Validation error matrix for RF: ', dtw_testAccuracy);
+  print('Validation producers accuracy for RF: ', dtw_testAccuracy.producersAccuracy());
+  print('Validation consumers accuracy for RF: ', dtw_testAccuracy.consumersAccuracy());
+  print('Validation overall accuracy for RF: ', dtw_testAccuracy.accuracy());
+  print('Validation kappa index for RF: ', dtw_testAccuracy.kappa());
   
   // Visualize the post-processed map and compare it to it's non post-processed version
-  Map.addLayer(classification.clip(county.geometry()),
-               {palette: classification_palette, min: 1, max: 15},
+  Map.addLayer(classification.remap([1,2,4,6,7,9,10,12,14,15], [1,2,3,4,5,6,7,8,9,10]).clip(county.geometry()),
+               {palette: classification_palette, min: 1, max: 10},
                'RF classification (60 days) '+year);
-  Map.addLayer(classification_postproc.clip(county.geometry()),
-               {palette: classification_palette, min: 1, max: 15},
+  Map.addLayer(classification_postproc.remap([1,2,4,6,7,9,10,12,14,15], [1,2,3,4,5,6,7,8,9,10]).clip(county.geometry()),
+               {palette: classification_palette, min: 1, max: 10},
                'RF classification (60 days) post-processed '+year);    
                
   // Export classified data. This is recommended to get the full extent of the data generated and saved,
@@ -486,8 +458,8 @@ Object.keys(year_dict).forEach(function(i) {
   
   Export.image.toAsset({
     image: classification_postproc.clip(county.geometry()).toByte(),
-    description: ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc',
-    assetId: 'users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc',
+    description: ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+VERSION_NO+'_harmonized_postproc',
+    assetId: 'users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+VERSION_NO+'_harmonized_postproc',
     region: county.geometry(),
     crs: 'EPSG:4326',
     scale: 10,
@@ -532,9 +504,9 @@ Object.keys(year_dict).forEach(function(i) {
   // Export the confusion matrix to drive
   Export.table.toDrive({
     collection: ee.FeatureCollection(ee.Feature(null, {matrix: dtw_testAccuracy.array()})),
-    description: 'errorMatrix_'+year+'_'+VERSION_NO+'_harmonized_postproc',
+    description: 'errorMatrix_'+year+VERSION_NO+'_harmonized_postproc',
     folder: 'GEE_folder',
-    fileNamePrefix: 'errorMatrix_'+year+'_'+VERSION_NO+'_harmonized_postproc'
+    fileNamePrefix: 'errorMatrix_'+year+VERSION_NO+'_harmonized_postproc'
   })
 });
 
@@ -561,34 +533,9 @@ var legendTitle = ui.Label({
 // Add the title to the panel
 legend.add(legendTitle);
 
-// Creates and styles 1 row of the legend.
-var makeRow = function(color, name) {
-      // Create the label that is actually the colored box.
-      var colorBox = ui.Label({
-        style: {
-          backgroundColor: color,
-          // Use padding to give the box height and width.
-          padding: '8px',
-          margin: '0 0 4px 0'
-        }
-      });
-
-      // Create the label filled with the description text.
-      var description = ui.Label({
-        value: name,
-        style: {margin: '0 0 4px 6px'}
-      });
-
-      // return the panel
-      return ui.Panel({
-        widgets: [colorBox, description],
-        layout: ui.Panel.Layout.Flow('horizontal')
-      });
-};
-
 // Add color and and names
-for (var i = 0; i <= 14; i++) {
-  legend.add(makeRow(classification_palette[i], Object.keys(classification_names)[i]));
+for (var i = 0; i <= classification_palette.length-1; i++) {
+  legend.add(legend_utils.makeRow(classification_palette[i], Object.keys(lc_classes)[i]));
   }
 
 // add legend to map (alternatively you can also print the legend to the console)

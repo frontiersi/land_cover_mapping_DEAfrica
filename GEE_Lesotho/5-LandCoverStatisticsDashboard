@@ -35,6 +35,9 @@ var palettes = require('users/gena/packages:palettes');
 var bioDivMap = require('users/ocsgeospatial/functions:bioDivMap.js');
 var charts = require('users/soilwatch/soilErosionApp:charts.js');
 
+var legend_utils = require('users/ocsgeospatial/Lesotho:8-LegendUtils.js');
+var load_layers = require('users/ocsgeospatial/Lesotho:7-Layers.js');
+
 // Compute the low-resolution factors (based on 30-250m covariates) of the RUSLE equation
 var R = RUSLEFactors.factorR();
 
@@ -736,7 +739,7 @@ function renderDateRange(date_range){
   Map.add(landCoverBaseline_layer);  
   Map.add(landCoverEndline_layer);    
 
-  var landCover_legend = makeLegend('Land Cover Legend', classification_palette_red, classification_names, 9);
+  var landCover_legend = legend_utils.makeLegend('Land Cover Legend', classification_palette_red, classification_names, 9);
   
   // Prepare feature collection for the pie chart
   var catchments_fc_endline = country.iterate(catchment_stats(classification_postproc, classes, classification_names), ee.FeatureCollection([]));
@@ -768,11 +771,12 @@ function renderDateRange(date_range){
                     colors: classification_palette_red,
                     sliceVisibilityThreshold: 0 // Don't group small slices.
                   });
-
+  
+  var catchments_fc_baseline_all = counties.iterate(catchment_stats(classification_baseline, classes, classification_names), ee.FeatureCollection([]));
   // Generate a bar chart summary if the entire country is selected
   if (adm0_name === adm1_name) {
     var landCoverEndline_barChart = ui.Chart.feature.groups({
-            features: counties.iterate(catchment_stats(classification_postproc, classes, classification_names), ee.FeatureCollection([])),
+              features: catchments_fc_baseline_all,
             xProperty: 'catchment',
             yProperty: 'area',
             seriesProperty: 'lc_type'
@@ -1983,8 +1987,6 @@ function renderDateRange(date_range){
                                 ))
       }, filt_loss)).sort('lc_val');
       
-      print(filt_gain_loss);
-      
         // Add a summary chart.
       class_barChart = ui.Chart.feature.byProperty({
           features: filt_gain_loss,
@@ -2015,7 +2017,7 @@ function renderDateRange(date_range){
                               {min: 1, max:13, palette: change_palette}, 
                               'LC Change '+baseline_year+'-'+year);
   
-  var landCoverChange_legend = makeLegend('LC Change '+baseline_year+'-'+year, 
+  var landCoverChange_legend = legend_utils.makeLegend('LC Change '+baseline_year+'-'+year, 
                                           change_palette, change_names, 12);
 
   if(adm1_name === 'Lesotho') {
@@ -2117,7 +2119,7 @@ function renderDateRange(date_range){
   var degradation_layer = ui.Map.Layer(result.updateMask(strat_layer.neq(0).and(lc_mask)).randomVisualizer(), {}, 'Degradation Clusters');
   var degradation_palette = ['green', 'orange', 'brown', 'black', 'pink'];
   var degradation_names = ['cluster 1', 'cluster 2', 'cluster 3', 'cluster 4', 'cluster 5'];
-  var degradation_legend = makeLegend('Degradation Clusters', degradation_palette, degradation_names, 4);
+  var degradation_legend = legend_utils.makeLegend('Degradation Clusters', degradation_palette, degradation_names, 4);
   var degradation_caption = ui.Label('Land degradation expressed as a function of clusters. The clusters are not automatically labelled, so require ' +
                             'a level of interpretation to ordinate from least to most degraded.');
   var degradation_source = ui.Label('Adapted from: Nascimento, C. M., de Sousa Mendes, W., Silvero, N. E. Q., Poppiel, R. R., Sayao, V. M., ' +
@@ -2282,97 +2284,97 @@ function renderDateRange(date_range){
                                   //{palette: palettes.colorbrewer.RdYlGn[11], min: -1, max: 1},
                                   "Water Frequency slope of change");
                                   
-  var A_legend = populateLegend("Soil Erosion Hazard (A, t.ha-1.year-1)", viz_A, "", "+", {});
-  var S_legend = populateLegend("Sustainability Factor (S, dimensionless)", viz_S," (positive)"," (negative)", {});
-  var freq_legend = populateLegend("Bare Soil Frequency (BSf, %)", viz_freq, "", "", {});
+  var A_legend = legend_utils.populateLegend("Soil Erosion Hazard (A, t.ha-1.year-1)", viz_A, "", "+", {});
+  var S_legend = legend_utils.populateLegend("Sustainability Factor (S, dimensionless)", viz_S," (positive)"," (negative)", {});
+  var freq_legend = legend_utils.populateLegend("Bare Soil Frequency (BSf, %)", viz_freq, "", "", {});
   
-  var ndviKendall_legend = populateLegend('Slope of NDVI Trend 2000-2021',
+  var ndviKendall_legend = legend_utils.populateLegend('Slope of NDVI Trend 2000-2021',
                                           {min:-0.01, max:0.01, palette: other_palette},
                                           " (decreasing)", " (increasing)", {});
 
-  var ndmiKendall_legend = populateLegend('Slope of NDMI Trend 2000-2021',
+  var ndmiKendall_legend = legend_utils.populateLegend('Slope of NDMI Trend 2000-2021',
                                         {min:-0.01, max:0.01, palette: other_palette},
                                         " (decreasing)", " (increasing)", {});
                                         
-  var sergsKendall_legend = populateLegend('Vegetation-Rainfall SeRGS '+start_year_str+'-'+end_year_str,
+  var sergsKendall_legend = legend_utils.populateLegend('Vegetation-Rainfall SeRGS '+start_year_str+'-'+end_year_str,
                                       {min:-0.001, max:0.001, palette: other_palette},
                                       " (decreasing)", " (increasing)", {});
                                       
-  var raoKendall_legend = populateLegend('Alpha Diversity Trend 2000-2021',
+  var raoKendall_legend = legend_utils.populateLegend('Alpha Diversity Trend 2000-2021',
                                          {min:-0.01, max:0.01, palette: other_palette},
                                          " (decreasing)", " (increasing)", {});
   
-  var raoMask_legend = makeLegend('Non-Natural Cover', ['#c4281b', '#397e48'], ['Builtup', 'Forest'], 1);
+  var raoMask_legend = legend_utils.makeLegend('Non-Natural Cover', ['#c4281b', '#397e48'], ['Builtup', 'Forest'], 1);
   
-  var bsKendall_legend = populateLegend('Bare Soil Frequency Trend 2000-2021',
+  var bsKendall_legend = legend_utils.populateLegend('Bare Soil Frequency Trend 2000-2021',
                                          {min:-0.01, max:0.01, palette: bs_palette},
                                          " (decreasing)", " (increasing)", {});
                                          
-  var waterKendall_legend = populateLegend('Water Frequency Trend '+start_year_str+'-'+end_year_str,
+  var waterKendall_legend = legend_utils.populateLegend('Water Frequency Trend '+start_year_str+'-'+end_year_str,
                                        {min:-0.01, max:0.01, palette: water_palette},
                                        " (decreasing)", " (increasing)", {});
                                        
-  var prec_legend = populateLegend('Precipitation Trend '+start_year_str+'-'+end_year_str,
+  var prec_legend = legend_utils.populateLegend('Precipitation Trend '+start_year_str+'-'+end_year_str,
                                   {min:-10, max:10, palette: other_palette},
                                   " (decreasing)", " (increasing)", {});
-  var heavyPrec_legend = populateLegend('Heavy Precipitation Trend '+start_year_str+'-'+end_year_str,
+  var heavyPrec_legend = legend_utils.populateLegend('Heavy Precipitation Trend '+start_year_str+'-'+end_year_str,
                                   {min:-0.1, max:0.1, palette: other_palette},
                                   " (decreasing)", " (increasing)", {});
-  var temp_legend = populateLegend('Temperature Trend '+start_year_str+'-'+end_year_str,
+  var temp_legend = legend_utils.populateLegend('Temperature Trend '+start_year_str+'-'+end_year_str,
                                    {min:-0.1, max:0.1, palette: other_palette},
                                     " (decreasing)", " (increasing)", {});
-  var ssm_legend = populateLegend('Soil Moisture Trend '+start_year_short_ssm_str+'-'+end_year_str,
+  var ssm_legend = legend_utils.populateLegend('Soil Moisture Trend '+start_year_short_ssm_str+'-'+end_year_str,
                                  {min:-0.1, max:0.1, palette: other_palette},
                                   " (decreasing)", " (increasing)", {});
-  var precLast_legend = populateLegend('Precipitation '+end_year_str,
+  var precLast_legend = legend_utils.populateLegend('Precipitation '+end_year_str,
                                   {min:0, max:1500, palette: other_palette},
                                   "", " +", {});
-  var heavyPrecLast_legend = populateLegend('Heavy Precipitation '+end_year_str,
+  var heavyPrecLast_legend = legend_utils.populateLegend('Heavy Precipitation '+end_year_str,
                                   {min:0, max:20, palette: other_palette},
                                   "", " +", {});
-  var tempLast_legend = populateLegend('Temperature '+end_year_str,
+  var tempLast_legend = legend_utils.populateLegend('Temperature '+end_year_str,
                                    {min:0, max:30, palette: other_palette},
                                     "", " +", {});
-  var ssmLast_legend = populateLegend('Soil Moisture '+end_year_str,
+  var ssmLast_legend = legend_utils.populateLegend('Soil Moisture '+end_year_str,
                                  {min:0, max:15, palette: other_palette},
                                   "", " +", {});
                                   
-  var npp_legend = populateLegend('NPP Trend 2009-2021',
+  var npp_legend = legend_utils.populateLegend('NPP Trend 2009-2021',
                                    {min:-5, max:5, palette: other_palette},
                                    " (decreasing)", " (increasing)", {});
-  var et_legend = populateLegend('ET Trend 2009-2021',
+  var et_legend = legend_utils.populateLegend('ET Trend 2009-2021',
                                 {min:-50, max:50, palette: other_palette},
                                 " (decreasing)", " (increasing)", {});
-  var rue_legend = populateLegend('RUE Trend 2009-2021',
+  var rue_legend = legend_utils.populateLegend('RUE Trend 2009-2021',
                                   {min:-0.01, max:0.01, palette: other_palette},
                                   " (decreasing)", " (increasing)", {});
-  var wue_legend = populateLegend('WUE Trend 2009-2021',
+  var wue_legend = legend_utils.populateLegend('WUE Trend 2009-2021',
                                   {min:-0.01, max:0.01, palette: other_palette},
                                   " (decreasing)", " (increasing)", {});
 
-  var organicCarbon_legend = populateLegend('Organic Carbon (g/kg)', 
+  var organicCarbon_legend = legend_utils.populateLegend('Organic Carbon (g/kg)', 
                                             {min: 0, max: 5.5, palette: carbon_palette},
                                             "", "", {});
-  var bulkDensity_legend = populateLegend('Organic Carbon (g/kg)', 
+  var bulkDensity_legend = legend_utils.populateLegend('Organic Carbon (g/kg)', 
                                             {min: 1.4, max: 1.9, palette: bulkDensity_palette},
                                             "", "", {});
-  var soilFertility_legend = makeLegend('LESIS Soil Fertility', ['red', 'lightgreen', 'darkgreen'], 
+  var soilFertility_legend = legend_utils.makeLegend('LESIS Soil Fertility', ['red', 'lightgreen', 'darkgreen'], 
                                         ['Low Fertility', 'Moderate Fertility', 'High Fertility'], 2);
 
 
-  var raoCV_legend = populateLegend('Beta diversity (Species Turnover) 2000-2021',
+  var raoCV_legend = legend_utils.populateLegend('Beta diversity (Species Turnover) 2000-2021',
                                     {min:0, max:2, palette: palettes.matplotlib.viridis[7]},
                                     " (low)", "+ (high)", {});
 
-  var raoLatest_legend = populateLegend('Alpha diversity 2021',
+  var raoLatest_legend = legend_utils.populateLegend('Alpha diversity 2021',
                                     {min:0, max: 1, palette: palettes.matplotlib.viridis[7]},
                                     " (low)", " (high)", {});
 
-  var vci_legend = populateLegend('Productivity State',
+  var vci_legend = legend_utils.populateLegend('Productivity State',
                                     {min: -2, max: 2, palette: other_palette},
                                     "- (low)", "+ (high)", {});
 
-  var lcci_legend = populateLegend('Productivity Performance',
+  var lcci_legend = legend_utils.populateLegend('Productivity Performance',
                                    {min:0, max: 0.5, palette: lcci_palette},
                                    " (low)", "+ (high)", {});
   
@@ -2995,7 +2997,7 @@ function renderDateRange(date_range){
   var worldCover_classes = ee.Dictionary({'Trees': 10, 'Shrubland': 20, 'Grassland': 30, 'Cropland': 40, 'Built-Up': 50, 'Barren / Sparse Vegetation': 60, 
                                           'Snow and Ice': 70, 'Open Water': 80, 'Herbaceous Wetland': 90, 'Mangroves': 95, 'Moss and Lichen': 100});
   
-  var worldCover_legend = makeLegend('Land Cover', worldCover_palette, worldCover_names, 10);
+  var worldCover_legend = legend_utils.makeLegend('Land Cover', worldCover_palette, worldCover_names, 10);
 
   var worldcover_fc = country.iterate(catchment_stats(world_cover.clip(country.geometry()).rename('constant'), worldCover_classes, worldCover_names),
                                          ee.FeatureCollection([]));
@@ -3020,14 +3022,33 @@ function renderDateRange(date_range){
   var worldCover_caption = ui.Label('The most recent global land cover map at 10m resolution.');
   
   var plotsDD = ui.Select([], 'Select Plot');
-  var plots = {};
   
+  var plots = {};
+  var inputs = {
+    'classification_baseline': classification_baseline,
+    'classification_palette': classification_palette,
+    'classification_palette_red': classification_palette_red,
+    'baseline_year': baseline_year,
+    'lc_mask_baseline': lc_mask_baseline,
+    'classes': classes,
+    'classification_names': classification_names,
+    'country': country,
+    'adm1_name': adm1_name,
+    'counties': counties,
+    'catchments_fc_baseline': catchments_fc_baseline,
+    'catchments_fc_baseline_all': catchments_fc_baseline_all
+  };
+  
+  plots = load_layers.loadLayers(inputs, plots);
+
+  /*
   plots['Land Cover Baseline - '+baseline_year] = {'layers': [aoi_layer, landCoverBaseline_layer],
                                                     'legends': [landCover_legend],
                                                     'plots': [landCoverBaseline_pieChart, landCoverBaseline_barChart],
                                                     'sources': [],
                                                     'captions': []
                                                     };
+  */
   
   plots['Land Cover Endline - '+year] = {'layers': [aoi_layer, landCoverEndline_layer],
                                                 'legends': [landCover_legend],
@@ -3233,7 +3254,8 @@ function renderDateRange(date_range){
           series: {0: {color: "#993404"}}
   };
 
-  var A_hist = charts.customHistogram(A.log(), 'soil_erosion_hazard', country.geometry(), 'label', A_options, null, 0.1).setChartType('ColumnChart');
+  var A_hist = charts.customHistogram(A,//.log(), 
+                                      'soil_erosion_hazard', country.geometry(), 'label', A_options, 400, 5).setChartType('ColumnChart');
 
   var S_options =  {title: 'RUSLE Sustainability Factor (S) Distribution - '+adm0_name+' Jan-Dec '+year,
           hAxis: {title: 'dimensionless'},
@@ -3783,128 +3805,7 @@ function renderDateRange(date_range){
   }
 }
 
-var makeLegend = function(title, palette, class_names, class_length){
-  // Create a legend for the different crop types
-  // set position of panel
-  var legend = ui.Panel({
-    style: {
-      position: 'bottom-left',
-      padding: '12px 15px'
-    }
-  });
-
-  // Create legend title
-  var legendTitle = ui.Label({
-    value: title,
-    style: {
-      fontWeight: 'bold',
-      fontSize: '18px',
-      margin: '0 0 4px 0',
-      padding: '0'
-      }
-  });
-
-  // Add the title to the panel
-  legend.add(legendTitle);
-
-  // Creates and styles 1 row of the legend.
-  var makeRow = function(color, name) {
-        // Create the label that is actually the colored box.
-        var colorBox = ui.Label({
-          style: {
-            backgroundColor: color,
-            // Use padding to give the box height and width.
-            padding: '8px',
-            fontSize: '12px',
-            margin: '0 0 4px 0'
-          }
-        });
-
-        // Create the label filled with the description text.
-        var description = ui.Label({
-          value: name,
-          style: {margin: '0 0 4px 6px'}
-        });
-
-        // return the panel
-        return ui.Panel({
-          widgets: [colorBox, description],
-          layout: ui.Panel.Layout.Flow('horizontal')
-        });
-  };
-
-  // Add color and and names
-  for (var i = 0; i <= class_length; i++) {
-    legend.add(makeRow(palette[i], class_names[i]));
-    }
-
-  return legend
-}
-
-// Function to populate the color palette legends for the app layers
-var populateLegend = function(legend_name, viz_params, add_char_min, add_char_max, options){
-
-    // Create a legend for the different crop types
-    // set position of panel
-    var legend = ui.Panel({
-      style: {
-        position: 'bottom-left',
-        padding: '12px 15px'
-      }
-    });
-
-    // Create legend title
-    var legend_title = ui.Label({
-      value: legend_name,
-      style: {
-      fontWeight: 'bold',
-      fontSize: '18px',
-      margin: '0 0 0 0',
-      padding: '0',
-      //width: '115px'
-      }
-      });
-
-    // Add the title to the panel
-    legend.add(legend_title);
-
-    // create the legend image
-    var lon = ee.Image.pixelLonLat().select('latitude');
-    var gradient = lon.multiply(ee.Number(viz_params.max).subtract(viz_params.min).divide(100)).add(viz_params.min);
-    var legend_image = options.legend_image || gradient.visualize(viz_params);
-
-    // create text on top of legend
-    var legend_panel_max = ui.Panel({
-      widgets: [
-      ui.Label(viz_params['max'] + add_char_max)
-      ],
-      });
-
-    legend.add(legend_panel_max);
-
-    // create thumbnail from the image
-    var thumbnail = ui.Thumbnail({
-      image: legend_image ,
-      params: {bbox: '0,0,10,100', dimensions:'10x25'},
-      style: {padding: '1px', position: 'bottom-center', fontSize: '18px'}
-      });
-
-    // add the thumbnail to the legend
-    legend.add(thumbnail);
-
-    // create text on top of legend
-    var legend_panel_min = ui.Panel({
-      widgets: [
-      ui.Label(viz_params['min'] + add_char_min)
-      ],
-      });
-
-    legend.add(legend_panel_min);
-
-    return legend
-};
-
-var landCover_legend = makeLegend('Land Cover Legend', classification_palette_red, classification_names, 9);
+var landCover_legend = legend_utils.makeLegend('Land Cover Legend', classification_palette_red, classification_names, 9);
 Map.add(landCover_legend);
 panel.add(mgci_chart);
 

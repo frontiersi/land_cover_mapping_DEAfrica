@@ -3,66 +3,24 @@
 // ****************************************************************************************************************** //
 // This workbench performs the land cover harmonization across the produced land cover years
 
+var params = require('users/ocsgeospatial/Lesotho:6-Parameters.js');
+var legend_utils = require('users/ocsgeospatial/Lesotho:8-LegendUtils.js');
+var LCParams = params.LCParams();
+
 // ****************************************************************************************************************** //
-var VERSION_NO = 'v3'; // Version number of the land cover outputs produced
-var ALGO = 'RF'; // Algorithm to apply. Default is Random Forest, as sufficient training data is available for 2021.
+var VERSION_NO = LCParams['VERSION_NO'].slice(1); // Version number of the land cover outputs produced
+var ALGO = LCParams['ALGO']; // Algorithm to apply. Default is Random Forest, as sufficient training data is available for 2021.
 
-var lcdb2017 = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2017_'+VERSION_NO);
-var lcdb2018 = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2018_'+VERSION_NO);
-var lcdb2019 = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2019_'+VERSION_NO);
-var lcdb2020 = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2020_'+VERSION_NO);
-var lcdb2021 = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2021_'+VERSION_NO);
-
-// Initialize the years backwards, because we take 2021 to be the baseline year
-var lc_timeseries = [lcdb2021, lcdb2021, lcdb2020, lcdb2019, lcdb2018, lcdb2017, lcdb2017];
-// Buffer the list with double the year 2021 and double the year 2017 so all years have a previous and a next neighbour
-var years = ['2021', '2021', '2020', '2019', '2018', '2017', '2017'];
-// ****************************************************************************************************************** //
-
-var lcdb2015 = ee.Image('users/ocsgeospatial/Lesotho/LCDB_Lesotho_v2_2')
-               .remap([11, 12, 21, 22, 23, 24, 31, 33, 41, 42, 43, 44, 51, 61, 62, 71, 72, 73, 74, 75, 13, 14, 25, 32, 34, 35, 36, 37, 52], 
-                      [1, 1, 2, 2, 3, 14, 4, 5, 6, 6, 7, 8, 9, 10, 11, 12, 12, 12, 15, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0]).selfMask();
+var years = Object.keys(LCParams['LC_YEARS']);
+years = [years[0]].concat(years).concat([years[years.length-1]]);
 
 var county = ee.Feature(ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_boundaries").first()).simplify(100);
+Map.centerObject(county);
 
-/*
-var palette = [
-  '#ea3f42', // 1.urban
-  '#fbd278', // 2.croplands
-  '#fbd278', // 3. degraded crop
-  '#527300', // 4. needleleaf
-  '#527300', // 5. broadleaf
-  '#164fab', // 6. water
-  '#7db4ff', // 7. wetlands
-  '#164fab',  // 8. river banks
-  '#a4e400', // 9. shrub
-  '#d8febc',  // 10. grass
-  '#d8febc', //11. degraded grass
-  '#fffebb', // 12. barren
-  '#fffebb', // 13. mine
-  '#95dfa5', // 14. Irrigated Cropland
-  //'#a4651d' // 15. Gullies
-];
-*/
-
+// Class list
+var classification_names = LCParams['LC_CLASSES'];
 // The corresponding color hex keys for the land cover classes
-var palette = [
-  '#ff1411', // 1.urban
-  '#fff78f', // 2.croplands
-  '#fbd278', // 3. degraded crop
-  '#4e8845', // 4. needleleaf
-  '#527300', // 5. broadleaf
-  '#005b85', // 6. water
-  '#68b6e5', // 7. wetlands
-  '#164fab',  // 8. river banks
-  '#c78d36', // 9. shrub
-  '#d6e591',  // 10. grass
-  '#d8febc', //11. degraded grass
-  '#9ba7a0', // 12. barren
-  '#fffebb', // 13. mine
-  '#95dfa5', // 14. Irrigated Cropland
-  '#562118' // 15. Gullies
-];
+var classification_palette = LCParams['LC_PALETTE'];
 
 // The 2015 palette has additional classes from the newly classified data
 var palette2015 = [
@@ -83,19 +41,24 @@ var palette2015 = [
   '#a4651d' // 15. Gullies
 ];
 
-// Plot the original Land Cover Series
-//Map.addLayer(lcdb2015, {palette: palette2015, min: 1, max: 15}, 'lcdb2015');
-Map.centerObject(lcdb2017);
-Map.addLayer(lcdb2017, {palette: palette, min: 1, max: 14}, '2017');
-Map.addLayer(lcdb2018, {palette: palette, min: 1, max: 14}, '2018');
-Map.addLayer(lcdb2019, {palette: palette, min: 1, max: 14}, '2019');
-Map.addLayer(lcdb2020, {palette: palette, min: 1, max: 14}, '2020');
-Map.addLayer(lcdb2021, {palette: palette, min: 1, max: 14}, '2021');
+var lc_timeseries = [ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+years[0]+'_'+VERSION_NO)];
+years.slice(1, -1).forEach(function(key) {
+  var lc_layer = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+key+'_'+VERSION_NO);
+  lc_timeseries.push(lc_layer);
+  Map.addLayer(lc_layer.remap([1,2,4,6,7,9,10,12,14,15], [1,2,3,4,5,6,7,8,9,10]), {palette: classification_palette, min: 1, max: 10}, key);
+});
+lc_timeseries.push(ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+years[years.length-1]+'_'+VERSION_NO))
 
+// ****************************************************************************************************************** //
+
+var lcdb2015 = ee.Image('users/ocsgeospatial/Lesotho/LCDB_Lesotho_v2_2')
+               .remap([11, 12, 21, 22, 23, 24, 31, 33, 41, 42, 43, 44, 51, 61, 62, 71, 72, 73, 74, 75, 13, 14, 25, 32, 34, 35, 36, 37, 52], 
+                      [1, 1, 2, 2, 3, 14, 4, 5, 6, 6, 7, 8, 9, 10, 11, 12, 12, 12, 15, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0]).selfMask();
+
+lc_timeseries = lc_timeseries.reverse();                 
 var previous;
 var current;
 var next;
-var lc_timeseries_new = [];
 for (var i = 1; i < lc_timeseries.length-1; i++) {
   
   // Define a previous and next year by selecting the adjacent years wrt the current year
@@ -204,11 +167,39 @@ for (var i = 1; i < lc_timeseries.length-1; i++) {
 
 }
 
-lc_timeseries_new = lc_timeseries.slice(1, -1);
+var lc_timeseries_new = lc_timeseries.slice(1, -1);
+years.slice(1, -1).forEach(function(key) {
+  Map.addLayer(ee.Image(lc_timeseries_new[years.indexOf(key)]).remap([1,2,4,6,7,9,10,12,14,15], [1,2,3,4,5,6,7,8,9,10]), 
+               {palette: classification_palette, min: 1, max: 10}, key+' filtered');
+});
 
-// Plot the Harmonized Land Cover Series to compare with the non-harmonized one
-Map.addLayer(ee.Image(lc_timeseries_new.slice(-1)), {palette: palette, min: 1, max: 14}, '2017 filtered')
-Map.addLayer(ee.Image(lc_timeseries_new.slice(-2, -1)), {palette: palette, min: 1, max: 14}, '2018 filtered')
-Map.addLayer(ee.Image(lc_timeseries_new.slice(-3, -2)), {palette: palette, min: 1, max: 14}, '2019 filtered')
-Map.addLayer(ee.Image(lc_timeseries_new.slice(-4, -3)), {palette: palette, min: 1, max: 14}, '2020 filtered')
-Map.addLayer(ee.Image(lc_timeseries_new.slice(-5, -4)), {palette: palette, min: 1, max: 14}, '2021 filtered')
+// Create a legend for the different crop types
+// set position of panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Create legend title
+var legendTitle = ui.Label({
+  value: 'Legend',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+
+// Add the title to the panel
+legend.add(legendTitle);
+
+// Add color and and names
+for (var i = 0; i <= classification_palette.length-1; i++) {
+  legend.add(legend_utils.makeRow(classification_palette[i], Object.keys(classification_names)[i]));
+  }
+
+// add legend to map (alternatively you can also print the legend to the console)
+Map.add(legend);
