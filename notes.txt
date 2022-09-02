@@ -1,0 +1,68 @@
+1-LandCoverDataCleaning
+- Difference between using surface reflectance or top-of-atmosphere, but Lavender changed William's code to SR when running to compare like with like
+- Can't do anything about cloudmasking; we use a different method
+- Lesotho had two sources of training data
+- Also uses a landcover map as a reference (stratify the training data)
+- we will need a reference landcover map to produce the stratified training data
+- computes bimonthly geomedian, calculates NDVI first, then takes Geomedian
+    - We have not validated the geomedian implementation (cannot comment on similarity or differences in algorithm to DE Africa)
+    - Lavender tried to export a small area to compare between products
+- Cloudmasking approach is likely completely different -- this is something that William customised, we use what DE Africa has by default
+    - geomedian should address some of this anyway
+- For each class, clean training data relative to landcover mask
+    - identify pixels in landcover map for that class
+    - randomly sample 1000 pixels from masked features
+    - cluster the random samples, test number of clusters 2-5
+    - Lavender had to design a for loop to tune number of clusters
+    - apply fitted cluster to all features from that class
+    - look at the cluster values for the training points (ground truth) not the random sampling that built the cluster
+    - tries to identify minor clusters that are inconsistent with the major cluster, judged by the number of cluster members relative to whole membership
+    - sets 5% as threshold (if cluster size smaller than that, remove those training points as they're not correct for the landcover map for the desired year -- likely classified incorrectly)
+        - if only 10 members total, you could never remove an outlier (if on it's own, it's 10% in size, higher than the threshold)
+        - how was this theshold decided? Is it robust to other use cases?
+        - in most recent version, this step is doing nothing, all points were across two clusters
+        - is there an inconsistency? He masks according to the reference landcover map
+        - previously was building one cluster for all classes 
+    - Originally, didn't have access to the base map 
+        - had previously used an old 2015 landcover map
+        - base map is produced from random forest on all training dataset
+        - How well do we think the basemap reflects reality
+        - we can't produce the same reference map, we have ended up using his produced map. But we can't reproduce the entire method
+        - We have to have code that makes the basemap from all training data, but at this stage impossible to perfectly replicate. 
+- GEE and Python will use different psuedo-random number generators, so cannot possibly reproduce exact samples to fit the clustering model 
+
+2-LandCoverClassifaction
+- Only implemented random forest model, did not implement dynamic time Warping
+    - have asked william about this, but suggested we focus on random forest, which was used in publication
+- recreates training data in this notebook as well
+    - we can simplify this for users by writing out merged training data
+    - save two files (cleaned training data and filtered cleaned training data)
+- does a train test split, using random numbers 80% training 20%
+    - can't replicate this because it uses a random number
+    - he does this by assigning a random number between 0-1
+    - Lavender uses sklearn, but spent time trying to replicate, but couldn't get a reasonable results
+    - But, did reproduce this specifically for lesotho, but went back to using sklearn in mozambique and rwanda
+- Same as previous, applies cloud mask, gets geomedian
+- Implements an interpolation step 
+- Implements 5-fold cross validation (manually)
+    - Lavender replaces with sklearn
+    - he balances data for training (removes randomly)
+    - limits forest to 300, wetland to 150
+        - not customiseable for other approaches
+    - Concern that there's a mix of validation data into the training
+    - We should not compare our accuracy to his, his result might be susceptible to data leakage
+    - Balancing might not be making that much difference
+        - we can revisit this as part of our workflow
+    - gets the satellite bands
+    - trains random forest
+        - can't know that sklearn implements that same
+    - produced five classified maps, based on the training data split
+- Majority votes for each pixel 
+    - instead, lavender uses all training data
+
+3-LandCoverHarmonization
+- haven't adapted this across
+- William says not working or not overly helpful. Not improving a lot
+
+4-LandCoverPostProcessing
+- 
