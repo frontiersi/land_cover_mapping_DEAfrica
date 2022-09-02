@@ -1,0 +1,323 @@
+// ****************************************************************************************************************** //
+// *************************************** 1. Training Data Clean-up Workbench ************************************** //
+// ****************************************************************************************************************** //
+// This workbench is intended to clean up the training data using Kmeans clustering and filtering out 
+// the training data points which are likely to no longer belong to a given land cover class 
+
+var params = require('users/ocsgeospatial/Lesotho:6-Parameters.js');
+var legend_utils = require('users/ocsgeospatial/Lesotho:8-LegendUtils.js');
+var LCParams = params.LCParams();
+
+// Input data parameters for the land cover classification
+// ****************************************************************************************************************** //
+var CLASS_NAME = LCParams['CLASS_NAME']; // Property name of the feature collection containing the crop type class attribute
+var AGG_INTERVAL = LCParams['AGG_INTERVAL']; // Number of days to use to create the temporal composite for 2020
+var S2_COLLECTION = LCParams['COLLECTION']; // Whether to use L1C (S2) or L2A (S2_SR) data. L2A data is available from 2019 onwards.
+var S2_BAND_LIST = LCParams['BAND_LIST']; // S2 Bands to use as DTW input
+var BAND_NO = S2_BAND_LIST.length; // Number of bands to use for the DTW. 
+                                   // The default 7 bands are: S2 NDVI, S2 B2, S2 B3, S2 B11, S2 B12, S1 VV, S1 VH
+var YEAR = LCParams['TD_CLEANUP_YEAR']; // The year for which to clean up the training dataset.
+var VERSION_NO = LCParams['VERSION_NO']; // Version number of the land cover outputs produced
+// ****************************************************************************************************************** //
+
+// Lesotho boundaries to use
+var lesotho_boundaries = ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_boundaries");
+
+// Create a no-water mask for cloud-masking procedure
+var jrc_water = ee.Image("JRC/GSW1_2/GlobalSurfaceWater").clip(lesotho_boundaries.geometry());
+var not_water = jrc_water.select('max_extent').eq(0);
+
+// Create an empty image into which to paint the features, cast to byte.
+var empty = ee.Image().byte();
+
+// Paint all the polygon edges with the same number and width, display.
+var outline = empty.paint({
+  featureCollection: lesotho_boundaries,
+  color: 1,
+  width: 3
+});
+
+Map.centerObject(lesotho_boundaries.geometry(), 10);
+Map.addLayer(outline, {palette: 'FF0000'}, 'Lesotho boundaries');
+
+var landcover_lesotho = ee.Image('users/ocsgeospatial/Lesotho/rf_lesotho_s2_60_10bands_kfold_2021_v3_harmonized_postproc');
+var landcover_td2021 = ee.FeatureCollection('users/ocsgeospatial/Lesotho/trainingData2021_latest');
+var signatures_shrublandSurvey = ee.FeatureCollection('users/ocsgeospatial/Lesotho/trainingData2021_shrublandSurvey');
+
+var signatures_noninvasiveShrub = signatures_shrublandSurvey.filter(ee.Filter.and(ee.Filter.eq('land_cover', 'Shrubland'), 
+                                                                           ee.Filter.eq('is_the_spe', 'Non_Invasive')))
+                                                                           .map(function(feat){return feat.set('LC_Class_I', 9)});
+var signatures_invasiveShrub = signatures_shrublandSurvey.filter(ee.Filter.and(ee.Filter.eq('land_cover', 'Shrubland'), 
+                                                                         ee.Filter.eq('is_the_spe', 'Invasive')))
+                                                                         .map(function(feat){return feat.set('LC_Class_I', 9)});
+var signatures_trees = signatures_shrublandSurvey.filter(ee.Filter.eq('land_cover', 'Trees'))
+                                                                       .map(function(feat){return feat.set('LC_Class_I', 4)});
+var signatures_grassland = signatures_shrublandSurvey.filter(ee.Filter.eq('land_cover', 'Grassland'))
+                                                                      .map(function(feat){return feat.set('LC_Class_I', 10)});      
+var signatures_irrcropland = signatures_shrublandSurvey.filter(ee.Filter.eq('land_cover', 'Irrigated_Agriculture'))
+                                                                    .map(function(feat){return feat.set('LC_Class_I', 14)});   
+landcover_td2021 = landcover_td2021.merge(signatures_noninvasiveShrub)
+                                   .merge(signatures_invasiveShrub)
+                                   .merge(signatures_trees)
+                                   .merge(signatures_grassland)
+                                   .merge(signatures_irrcropland);
+
+// Import external dependencies
+var palettes = require('users/gena/packages:palettes');
+var wrapper = require('users/adugnagirma/gee_s1_ard:wrapper');
+var S2Masks = require('users/ocsgeospatial/functions:s2_masks.js');
+var composites = require('users/ocsgeospatial/functions:composites.js');
+
+var palette = palettes.misc.tol_rainbow[7];
+
+// Land Cover Classes dictionary
+// The classes commented out are not explicitly mapped for the new LCDB, but are introduced at a later stage of the processs
+var lc_classes = LCParams['LC_CLASSES'];
+// The corresponding color hex keys for the land cover classes
+var classification_palette = LCParams['LC_PALETTE'];
+
+
+// A function to calculate NDVI
+var addNDVI = function(image) {
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI').multiply(10000).toInt16();
+  return image.addBands(ndvi);
+};
+
+// Function to create the input Sentinel-2 composite features used for the reference data clean-up
+var createFeatures = function(geom, date_range) {
+  
+  // Load Sentinel-2 collection based on time range and area of interest
+  var s2_cl = S2Masks.loadImageCollection(S2_COLLECTION, date_range, lesotho_boundaries.geometry());
+
+  // Perform cloud masking using the S2 cloud probabilities assets from s2cloudless,
+  // courtesy of Sentinelhub/EU/Copernicus/ESA
+  var masked_collection = s2_cl
+                          .filterDate(date_range.get('start'), date_range.get('end'))
+                          .map(S2Masks.addCloudShadowMask(not_water, 1e4))
+                          .map(S2Masks.applyCloudShadowMask)
+                          .map(addNDVI); // Add NDVI to band list
+
+  // Generate a list of time intervals for which to generate a harmonized time series
+  var time_intervals = composites.extractTimeRanges(date_range.get('start'), date_range.get('end'), AGG_INTERVAL);
+  
+  // Generate harmonized monthly time series of FCover as input to the vegetation factor V
+  var s2_ts = composites.harmonizedTS(masked_collection, S2_BAND_LIST, time_intervals, {agg_type: 'geomedian'});
+
+  // Replace masked pixels by the mean of the previous and next timestamps
+  // This is the linear interpolation approach,
+  // which is more lightweight than other gap-filling approaches like Savitzky-Golay or harmonic regression
+  var stacked_composite = ee.Image(s2_ts
+                          .map(function(image){
+                            var currentDate = ee.Date(image.get('system:time_start'));
+                            var meanImage = s2_ts.filterDate(currentDate.advance(-AGG_INTERVAL-1, 'day'),
+                                                                 currentDate.advance(AGG_INTERVAL+1, 'day')).mean();
+                            // replace all masked values
+                            var ddiff = currentDate.difference(ee.Date(ee.String(date_range.get('start'))), 'day');
+                            return meanImage.where(image, image).toInt16();
+                          })
+                          .iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])));
+  
+  return stacked_composite
+};
+
+// Run the createFeatures function for the specified AOI and year.
+var stacked_composite = createFeatures(lesotho_boundaries.geometry(), ee.Dictionary({'start': YEAR+'-01-01', 'end': YEAR + '-12-31'}));
+
+// Plot example data
+Map.addLayer(stacked_composite, {bands:['NDVI_2', 'NDVI_1', 'NDVI'], min:0, max:7000}, 'stacked_composite');
+
+var training = stacked_composite.updateMask(landcover_lesotho.eq(2))//.select('NDV.*') 
+.sample({
+      //collection: landcover_td2021.filter(ee.Filter.eq(CLASS_NAME, 2)),
+      scale: 10,
+      numPixels: 1000,
+      tileScale: 4
+    });
+
+// Instantiate the clusterer and train it.
+var clusterer = ee.Clusterer.wekaCascadeKMeans(2, 5)
+                .train(training);
+
+// Cluster the input using the trained clusterer.
+var result = stacked_composite//.select('NDVI.*')
+             .clip(lesotho_boundaries.geometry()).cluster(clusterer);
+
+// Add +1 to cluster classes, so values start from 1 upwards
+result = result.expression('PRED + 1', {'PRED': result.select('cluster')}).updateMask(landcover_lesotho.eq(2)).toByte();
+
+// Plot results on the map
+Map.addLayer(landcover_lesotho, {palette: classification_palette , min:1, max:15}, 'Land Cover Lesotho 2021');
+Map.addLayer(result.randomVisualizer().clip(lesotho_boundaries.geometry()), {}, 'lesotho clusters');
+
+var key_list = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30];
+
+// Pre-define some customization options.
+var options = {
+  title: 'clusters histogram',
+  fontSize: 20,
+  hAxis: {title: 'NDVI'},
+  vAxis: {title: 'pixel count'},
+  series: {
+    0: {color: 'green'},
+    1: {color: 'orange'},
+    2: {color: 'brown'},
+    3: {color: 'black'},
+    4: {color: 'pink'},
+    5: {color: '#C89D7C'},
+    6: {color: 'blue'},
+    7: {color: 'red'},
+    8: {color: 'yellow'},
+    9: {color: '#00008B'},
+    10: {color: 'black'},
+    11: {color: 'pink'},
+    12: {color: '#C89D7C'},
+    13: {color: 'blue'},
+    14: {color: 'red'},
+    15: {color: 'green'},
+    16: {color: 'orange'},
+    17: {color: 'brown'},
+    18: {color: 'black'},
+    19: {color: 'pink'},
+    20: {color: '#C89D7C'},
+    21: {color: 'blue'},
+    22: {color: 'red'},
+    23: {color: 'yellow'},
+    24: {color: '#00008B'},
+    25: {color: 'black'},
+    26: {color: 'pink'},
+    27: {color: '#C89D7C'},
+    28: {color: 'blue'},
+    29: {color: 'red'}
+  }
+};
+
+// Prepare clusters histogram
+var hist_image = ee.List(key_list).iterate(function(key, previous){
+  previous = ee.Image(previous);
+  var image = previous.updateMask(result.eq(ee.Number(key))).select('NDVI_2').rename(ee.String(key));
+  return previous.addBands(image);
+}, stacked_composite);
+
+// Make the histogram, set the options.
+var histogram = ui.Chart.image.histogram({
+  image: ee.Image(hist_image).select(key_list), 
+  region: lesotho_boundaries.geometry(), 
+  scale: 40,
+  maxPixels: 10e13
+})
+.setSeriesNames(key_list)
+.setOptions(options);
+  
+// Display the histogram.
+print(histogram);
+print("Cluster Sizes:")
+print(result.reduceRegion({reducer: ee.Reducer.frequencyHistogram(), geometry: lesotho_boundaries.geometry(), scale:40, maxPixels:1e13, tileScale:4}))
+
+// Function to clean up training data based on the produced clusters
+var filtered_td = ee.Dictionary(lc_classes).values().iterate(function(val, previous){
+  val = ee.Number(val);
+  
+  // Run the function per each land cover class (i.e. mask out pixels not corresponding to the given class)
+  var mask = landcover_lesotho.eq(val);
+  //stacked_composite = stacked_composite.updateMask(mask);
+  
+  var training = mask.addBands(stacked_composite).updateMask(mask)//.select('NDV.*') 
+      .stratifiedSample({
+        //collection: landcover_td2021.filter(ee.Filter.eq(CLASS_NAME, 2)),
+        scale: 10,
+        region: lesotho_boundaries.geometry(),
+        numPoints: 1000,
+        tileScale: 2
+      });
+  
+  // Instantiate the clusterer and train it.
+  var clusterer = ee.Clusterer.wekaCascadeKMeans(2, 5)
+                  .train(training, stacked_composite.bandNames());
+  
+  // Cluster the input using the trained clusterer.
+  var result = stacked_composite//.select('NDVI.*')
+               .clip(lesotho_boundaries.geometry()).cluster(clusterer);
+  
+  // Add +1 to cluster classes, so values start from 1 upwards
+  result = result.expression('PRED + 1', {'PRED': result.select('cluster')}).updateMask(mask).toByte();
+
+  // Sample cluster values at reference data locations for the given class
+  var frequency = result.sampleRegions({
+    collection: landcover_td2021.filter(ee.Filter.eq('LC_Class_I', val)),
+    properties: ['LC_Class_I', 'LC_Class_n'],
+    scale: 10,
+    tileScale: 4,
+    geometries: true
+  });
+  
+  // Generate the frequency histogram of the sampled cluster data
+  var freq_histogram = frequency.filter(ee.Filter.eq('LC_Class_I', val)).aggregate_histogram('cluster');
+  var total_samples = landcover_td2021.filter(ee.Filter.eq('LC_Class_I', val)).size();
+  
+  // Only Keep pixel with cluster sizes larger than 5% of the total number of samples
+  // Clusters below 5% are considered to be outliers
+  var freq_list = ee.FeatureCollection(freq_histogram.map(function(k, v){
+    return ee.Feature(null, {'cluster': ee.Number.parse(k).toByte(), 'count': ee.Number(v)});
+  }).values())
+  .filter(ee.Filter.gt('count', total_samples.multiply(0.05)))
+  .aggregate_array('cluster');
+  
+  var frequency_filtered = frequency.filter(ee.Filter.inList('cluster', freq_list));
+  
+  return ee.FeatureCollection(previous).merge(frequency_filtered);
+}, ee.FeatureCollection([]));
+
+print("Filtered Training Data for the year " + YEAR + ":");
+print(filtered_td);
+
+// Apply land cover color scheme to reference data to plot them in their respective colors on the map
+var setPointProperties = function(f){
+  var class_val = f.get(CLASS_NAME);
+  var mapDisplayColors = ee.List(classification_palette);
+
+  // use the class as index to lookup the corresponding display color
+  return f.set({style: {color: mapDisplayColors.get(ee.Number(class_val).subtract(1))}})
+}
+
+// apply the function and view the results on map
+var styled_td = ee.FeatureCollection(filtered_td).map(setPointProperties);
+
+Map.addLayer(styled_td.style({styleProperty: "style"}), {}, 'land cover reference samples ' + YEAR);
+
+// Export the data to an asset
+Export.table.toAsset({
+  collection: filtered_td,
+  description: 'trainingData'+YEAR+VERSION_NO,
+  assetId: 'users/ocsgeospatial/Lesotho/trainingData'+YEAR+VERSION_NO
+});
+
+// Create a legend for the different crop types
+// set position of panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Create legend title
+var legendTitle = ui.Label({
+  value: 'Legend',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+
+// Add the title to the panel
+legend.add(legendTitle);
+
+// Add color and and names
+for (var i = 0; i <= classification_palette.length-1; i++) {
+  legend.add(legend_utils.makeRow(classification_palette[i], Object.keys(lc_classes)[i]));
+  }
+
+// add legend to map (alternatively you can also print the legend to the console)
+Map.add(legend);

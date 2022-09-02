@@ -1,0 +1,645 @@
+var lesotho_boundaries = ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_boundaries")
+//  .filter(ee.Filter.eq('region', 'MEA'));
+var cld = require('users/fitoprincipe/geetools:cloud_masks');
+
+var lesotho_geom = ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_aez");
+var jrc_water = ee.Image("JRC/GSW1_2/GlobalSurfaceWater").clip(lesotho_boundaries.geometry());
+var not_water = jrc_water.select('max_extent').eq(0);
+
+// Create an empty image into which to paint the features, cast to byte.
+var empty = ee.Image().byte();
+
+// Paint all the polygon edges with the same number and width, display.
+var outline = empty.paint({
+  featureCollection: lesotho_geom,
+  color: 1,
+  width: 3
+});
+Map.addLayer(outline, {palette: 'FF0000'}, 'AEZ boundaries');
+
+// Load a FeatureCollection of counties in Maine.
+//var lesotho_td = ee.FeatureCollection('users/ocsgeospatial/lesotho_unsupervised_td');
+var landcover_lesotho = ee.Image('users/ocsgeospatial/Lesotho/rf_lesotho_s2_60_2021_full_new');
+
+var palettes = require('users/gena/packages:palettes');
+var palette = palettes.misc.tol_rainbow[7];
+
+var aez_values = ['Lowland', 'Senqu River Valley', 'Foothill', 'Mountain'];
+var lc_classes = {
+'Built-up': 1,
+'Cropland': 2,
+'Degraded Cropland': 3,
+'needleleaf': 4,
+'broadleaf': 5,
+'Water Body': 6,
+'Wetland': 7,
+'River Bank': 8,
+'Shrubland': 9,
+'Grassland': 10,
+'Degraded Grassland': 11,
+'Bare Surfaces': 12
+};
+
+var clusters = ['green_cluster', 'orange_cluster', 'brown_cluster', 'black_cluster', 'pink_cluster'];
+
+var time_interval = {
+  2016: ['2015-09-01', '2015-10-31', '2015-11-01', '2015-12-31', '2016-01-01', '2016-02-28', '2016-03-01', '2016-04-30', '2016-05-01', '2016-06-30', '2016-07-01', '2016-08-31', "COPERNICUS/S2"],
+  2017: ['2016-09-01', '2016-10-31', '2016-11-01', '2016-12-31', '2017-01-01', '2017-02-28', '2017-03-01', '2017-04-30', '2017-05-01', '2017-06-30', '2017-07-01', '2017-08-31', "COPERNICUS/S2"],
+  2018: ['2017-09-01', '2017-10-31', '2017-11-01', '2017-12-31', '2018-01-01', '2018-02-28', '2018-03-01', '2018-04-30', '2018-05-01', '2018-06-30', '2018-07-01', '2018-08-31', "COPERNICUS/S2"],
+  2019: ['2018-09-01', '2018-10-31', '2018-11-01', '2018-12-31', '2019-01-01', '2019-02-28', '2019-03-01', '2019-04-30', '2019-05-01', '2019-06-30', '2019-07-01', '2019-08-31', "COPERNICUS/S2"],
+  2020: ['2019-09-01', '2019-10-31', '2019-11-01', '2019-12-31', '2020-01-01', '2020-02-28', '2020-03-01', '2020-04-30', '2020-05-01', '2020-06-30', '2020-07-01', '2020-08-31', "COPERNICUS/S2_SR"],
+  2021: ['2020-11-01', '2020-12-31', '2021-01-01', '2021-02-28', '2021-03-01', '2021-04-30', '2021-05-01', '2021-06-30', '2021-07-01', '2021-08-31', '2021-09-01', '2021-10-31', "COPERNICUS/S2_SR"]
+};
+
+var min_clusters = ui.Textbox({
+  placeholder: 'Minimum number of clusters (max 5):',
+  //value: 3,
+  onChange: function(text) {
+    print(text + " clusters were chosen");
+  }
+});
+print('Minimum number of clusters (max 5):');
+print(min_clusters);
+
+var addNDVI = function(image) {
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  return image.addBands(ndvi);
+};
+
+var addNDWI = function(image) {
+  var ndwi = image.normalizedDifference(['B3', 'B8']).rename('NDWI');
+  return image.addBands(ndwi);
+};
+
+var maskCloud = function(image) {
+  var cloud_mask = cld.sclMask(['cloud_medium', 'cloud_high'])(image)
+  return image.addBands(cloud_mask);
+};
+
+var CLD_PRB_THRESH = 50;
+var CLOUD_FILTER = 90;
+var NIR_DRK_THRESH = 0.15;
+var CLD_PRJ_DIST = 1;
+var BUFFER = 50;
+
+var add_cloud_bands = function(img) {
+    //Get s2cloudless image, subset the probability band.
+    var cld_prb = ee.Image(img.get('s2cloudless')).select('probability')
+
+    //Condition s2cloudless by the probability threshold value.
+    var is_cloud = cld_prb.gt(CLD_PRB_THRESH).rename('clouds')
+
+    //Add the cloud probability layer and cloud mask as image bands.
+    return img.addBands(ee.Image([cld_prb, is_cloud]))
+}
+
+var add_shadow_bands = function(img) {
+    // Identify water pixels from the SCL band.
+    //var not_water = img.select('SCL').neq(6);
+
+    // Identify dark NIR pixels that are not water (potential cloud shadow pixels).
+    var SR_BAND_SCALE = 1e4
+    var dark_pixels = img.select('B8').lt(NIR_DRK_THRESH*SR_BAND_SCALE).multiply(not_water).rename('dark_pixels')
+
+    // Determine the direction to project cloud shadow from clouds (assumes UTM projection).
+    var shadow_azimuth = ee.Number(90).subtract(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')));
+
+    // Project shadows from clouds for the distance specified by the CLD_PRJ_DIST input.
+    var cld_proj = (img.select('clouds').directionalDistanceTransform(shadow_azimuth, CLD_PRJ_DIST*10)
+        .reproject({crs: img.select(0).projection(), scale: 100})
+        .select('distance')
+        .mask()
+        .rename('cloud_transform'))
+
+    // Identify the intersection of dark pixels with cloud shadow projection.
+    var shadows = cld_proj.multiply(dark_pixels).rename('shadows')
+
+    // Add dark pixels, cloud projection, and identified shadows as image bands.
+    return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
+}
+
+var add_cld_shdw_mask = function(img) {
+    // Add cloud component bands.
+    var img_cloud = add_cloud_bands(img)
+
+    // Add cloud shadow component bands.
+    var img_cloud_shadow = add_shadow_bands(img_cloud)
+
+    // Combine cloud and shadow mask, set cloud and shadow as value 1, else 0.
+    var is_cld_shdw = img_cloud_shadow.select('clouds').add(img_cloud_shadow.select('shadows')).gt(0)
+
+    // Remove small cloud-shadow patches and dilate remaining pixels by BUFFER input.
+    // 20 m scale is for speed, and assumes clouds don't require 10 m precision.
+    is_cld_shdw = (is_cld_shdw.focal_min(2).focal_max(BUFFER*2/60)
+        .reproject({crs: img.select([0]).projection(), scale: 60})
+        .rename('cloudmask'))
+
+    //Add the final cloud-shadow mask to the image.
+    return img_cloud_shadow.addBands(is_cld_shdw)
+}
+
+var apply_cld_shdw_mask = function(img) {
+    // Subset the cloudmask band and invert it so clouds/shadow are 0, else 1.
+    var not_cld_shdw = img.select('cloudmask').not()
+
+    // Subset reflectance bands and update their masks, return the result.
+    return img.select('B.*').updateMask(not_cld_shdw)
+    }
+
+var createFeatures = function(geom, time) {
+
+  var s2_baseline_1 = ee.ImageCollection(time[12])
+  .filterDate(time[0], time[1])
+  .filterBounds(geom)
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', CLOUD_FILTER);
+  
+  var s2_cloudless_1 = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+  .filterBounds(geom)
+  .filterDate(time[0], time[1])
+      
+  var s2_1 = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply({
+      primary: s2_baseline_1,
+      secondary: s2_cloudless_1,
+      condition: ee.Filter.equals({
+          leftField: 'system:index',
+          rightField: 'system:index'})
+  }));  
+  
+  var s2_baseline_2 = ee.ImageCollection(time[12])
+  .filterDate(time[2], time[3])
+  .filterBounds(geom)
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', CLOUD_FILTER);
+  
+    var s2_cloudless_2 = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+  .filterBounds(geom)
+  .filterDate(time[2], time[3])
+      
+  var s2_2 = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply({
+      primary: s2_baseline_2,
+      secondary: s2_cloudless_2,
+      condition: ee.Filter.equals({
+          leftField: 'system:index',
+          rightField: 'system:index'})
+  }));  
+  
+  var s2_baseline_3 = ee.ImageCollection(time[12])
+  .filterDate(time[4], time[5])
+  .filterBounds(geom)
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', CLOUD_FILTER);
+  
+    var s2_cloudless_3 = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+  .filterBounds(geom)
+  .filterDate(time[4], time[5])
+      
+  var s2_3 = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply({
+      primary: s2_baseline_3,
+      secondary: s2_cloudless_3,
+      condition: ee.Filter.equals({
+          leftField: 'system:index',
+          rightField: 'system:index'})
+  }));  
+  
+  var s2_baseline_4 = ee.ImageCollection(time[12])
+  .filterDate(time[6], time[7])
+  .filterBounds(geom)
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', CLOUD_FILTER);
+  
+    var s2_cloudless_4 = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+  .filterBounds(geom)
+  .filterDate(time[6], time[7])
+      
+  var s2_4 = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply({
+      primary: s2_baseline_4,
+      secondary: s2_cloudless_4,
+      condition: ee.Filter.equals({
+          leftField: 'system:index',
+          rightField: 'system:index'})
+  }));  
+  
+  var s2_baseline_5 = ee.ImageCollection(time[12])
+  .filterDate(time[8], time[9])
+  .filterBounds(geom)
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', CLOUD_FILTER);
+  
+    var s2_cloudless_5 = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+  .filterBounds(geom)
+  .filterDate(time[8], time[9])
+      
+  var s2_5 = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply({
+      primary: s2_baseline_5,
+      secondary: s2_cloudless_5,
+      condition: ee.Filter.equals({
+          leftField: 'system:index',
+          rightField: 'system:index'})
+  }));  
+  
+  var s2_baseline_6 = ee.ImageCollection(time[12])
+  .filterDate(time[10], time[11])
+  .filterBounds(geom)
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', CLOUD_FILTER);
+  
+    var s2_cloudless_6 = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+  .filterBounds(geom)
+  .filterDate(time[10], time[11])
+      
+  var s2_6 = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply({
+      primary: s2_baseline_6,
+      secondary: s2_cloudless_6,
+      condition: ee.Filter.equals({
+          leftField: 'system:index',
+          rightField: 'system:index'})
+  }));  
+  
+  // Test the addNDVI function on a single image.
+  var s2_ndvi_1 = s2_1.map(add_cld_shdw_mask).map(apply_cld_shdw_mask).map(addNDVI);//.map(maskCloud);//.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+  var s2_ndvi_2 = s2_2.map(add_cld_shdw_mask).map(apply_cld_shdw_mask).map(addNDVI);//.map(maskCloud);//.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+  var s2_ndvi_3 = s2_3.map(add_cld_shdw_mask).map(apply_cld_shdw_mask).map(addNDVI);//.map(maskCloud);//.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+  var s2_ndvi_4 = s2_4.map(add_cld_shdw_mask).map(apply_cld_shdw_mask).map(addNDVI);//.map(maskCloud);//.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+  var s2_ndvi_5 = s2_5.map(add_cld_shdw_mask).map(apply_cld_shdw_mask).map(addNDVI);//.map(maskCloud);//.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+  var s2_ndvi_6 = s2_6.map(add_cld_shdw_mask).map(apply_cld_shdw_mask).map(addNDVI);//.map(maskCloud);//.map(add_cld_shdw_mask).map(apply_cld_shdw_mask)
+  
+  // Compute the median in each band, each pixel.
+  // Band names are B1_median, B2_median, etc.
+  var s2_maxndvi_1 = s2_ndvi_1.qualityMosaic('NDVI').select(['B2','B3','B4','B8','B8A','B11','B12','NDVI']); //['B2','B3','B4','B8','B8A','B11','B12','NDVI']);
+  var s2_maxndvi_2 = s2_ndvi_2.qualityMosaic('NDVI').select(['B2','B3','B4','B8','B8A','B11','B12','NDVI']); //['B2','B3','B4','B8','B8A','B11','B12','NDVI']);
+  var s2_maxndvi_3 = s2_ndvi_3.qualityMosaic('NDVI').select(['B2','B3','B4','B8','B8A','B11','B12','NDVI']); //['B2','B3','B4','B8','B8A','B11','B12','NDVI']);
+  var s2_maxndvi_4 = s2_ndvi_4.qualityMosaic('NDVI').select(['B2','B3','B4','B8','B8A','B11','B12','NDVI']); //['B2','B3','B4','B8','B8A','B11','B12','NDVI']);
+  var s2_maxndvi_5 = s2_ndvi_5.qualityMosaic('NDVI').select(['B2','B3','B4','B8','B8A','B11','B12','NDVI']); //['B2','B3','B4','B8','B8A','B11','B12','NDVI']);
+  var s2_maxndvi_6 = s2_ndvi_6.qualityMosaic('NDVI').select(['B2','B3','B4','B8','B8A','B11','B12','NDVI']); //['B2','B3','B4','B8','B8A','B11','B12','NDVI']);
+  
+  //Map.addLayer(s2_maxndvi_1, {bands:['B8', 'B11', 'B4'], min:0, max:5000}, 'masked_1');
+  //Map.addLayer(s2_maxndvi_2, {bands:['B8', 'B11', 'B4'], min:0, max:5000}, 'masked_2');
+  //Map.addLayer(s2_maxndvi_3, {bands:['B8', 'B11', 'B4'], min:0, max:5000}, 'masked_3');
+  //Map.addLayer(s2_maxndvi_4, {bands:['B8', 'B11', 'B4'], min:0, max:5000}, 'masked_4');
+  //Map.addLayer(s2_maxndvi_5, {bands:['B8', 'B11', 'B4'], min:0, max:5000}, 'masked_5');
+  //Map.addLayer(s2_maxndvi_6, {bands:['B8', 'B11', 'B4'], min:0, max:5000}, 'masked_6');
+  
+  // Add reducer output to the Features in the collection.
+  //var raster_td = lesotho_td.reduceToImage({
+  //    properties: ['lulc_type'],
+  //    reducer: ee.Reducer.first()
+  //});
+  
+  var stacked_composite = s2_maxndvi_1
+  .addBands(s2_maxndvi_2)
+  .addBands(s2_maxndvi_3)
+  .addBands(s2_maxndvi_4)
+  .addBands(s2_maxndvi_5)
+  .addBands(s2_maxndvi_6);
+  //.select(['b1', 'NDVI', 'NDVI_1', 'NDVI_2', 'NDVI_3', 'NDVI_4', 'NDVI_5'])
+  
+  //var glcm = stacked_composite.select(['B8_5']).glcmTexture({size: 3});
+  
+  return stacked_composite.clip(geom);//.addBands(glcm.select(['B8_5_corr', 'B8_5_contrast']));
+};
+
+var secondSelect = ui.Select({
+  items: Object.keys(time_interval),
+  //onChange: function(key) {
+  //}
+});
+
+secondSelect.setPlaceholder("Select a year");
+print(secondSelect);
+
+var firstSelect = ui.Select({
+  items: Object.keys(lc_classes),
+  onChange: function(key) {
+  var stacked_composite = createFeatures(lesotho_boundaries.geometry(), time_interval[secondSelect.getValue()]);
+  
+  Map.centerObject(lesotho_boundaries.geometry(), 10);
+  Map.addLayer(stacked_composite, {bands:['B8_4', 'B4_4', 'B3_4'], min:0, max:3000}, 'stacked_composite');
+  
+  var mask = landcover_lesotho.eq(2).or(landcover_lesotho.eq(14)).rename('b1');//.focal_min(10, 'circle', 'meters');
+               
+  stacked_composite = mask.addBands(stacked_composite).updateMask(mask);
+  
+  var aez_kmeans = function(aez_val){
+      var geom = lesotho_geom
+      //.filter(ee.Filter.eq('ZONE_NAME', ee.String(aez_val)))
+      .geometry();
+      Map.centerObject(geom, 10);
+      var stacked_ndvi = stacked_composite.select(['b1', 'NDVI', 'NDVI_1', 'NDVI_2', 'NDVI_3', 'NDVI_4', 'NDVI_5'])
+      
+      var irrigated_points = ee.FeatureCollection('users/ocsgeospatial/Lesotho/irrigated_samples');
+      var rainfed_points = ee.FeatureCollection('users/ocsgeospatial/Lesotho/rainfed_samples');
+      var snic_segmentation = ee.Image('users/ocsgeospatial/Lesotho/Lesotho2020_segmentation');
+      
+      //Map.centerObject(country_of_interest, 7);
+      var table2 = ee.FeatureCollection(rainfed_points.filterMetadata("value","equals", 2));
+      var table3 = ee.FeatureCollection(rainfed_points.filterMetadata("value","equals", 3));
+      var table1 = ee.FeatureCollection(irrigated_points).set('value', 1);
+
+      var points = table1.merge(table2);
+
+      stacked_ndvi = snic_segmentation.addBands(stacked_ndvi).reduceConnectedComponents(ee.Reducer.mean());
+      
+        var training = stacked_ndvi.sampleRegions({
+        collection: points,
+        //reducer: ee.Reducer.mean(),
+        scale: 10,
+        //tileScale: 16,
+      })
+      
+      Map.addLayer(training, {}, 'irrigated points')
+
+      
+      /*
+      var training = stacked_ndvi.stratifiedSample({
+        numPoints: 1000,
+        classBand: 'b1',
+        scale: 10,
+        region: geom,
+        //tileScale: 16
+      });
+      */
+      
+      // Generic Function to remove a property from a feature
+      //var removeProperty = function(feat, property) {
+      //  var properties = feat.propertyNames()
+      //  var selectProperties = properties.filter(ee.Filter.neq('item', property))
+      //  return feat.select(selectProperties)
+      //};
+      
+      // Instantiate the clusterer and train it.
+      var clusterer = ee.Clusterer.wekaCascadeKMeans(ee.Number.parse(min_clusters.getValue()), 5).train(training);
+      
+      // Cluster the input using the trained clusterer.
+      var result = stacked_ndvi.clip(geom).cluster(clusterer)//.updateMask(mask);
+      
+      result = result.expression('PRED + 1', {'PRED': result.select('cluster')}).toByte();
+      
+      //Remove mountain areas that are not suitable for crop growth
+      var dem = ee.Image("JAXA/ALOS/AW3D30/V2_2").select("AVE_DSM");
+      var slope = ee.Terrain.slope(dem);
+      
+      // Define a boxcar or low-pass kernel.
+      var boxcar = ee.Kernel.square({
+        radius: 5, units: 'pixels', magnitude: 1
+      });
+      
+      // Smooth the image by convolving with the boxcar kernel.
+      slope = slope.convolve(boxcar);
+      
+      var dem_mask= dem.lt(3600);
+      var slope_mask = slope.lt(5);
+      var crop_mask = dem_mask.and(slope_mask);
+
+      var result_pxc = result.updateMask(mask.and(crop_mask)).connectedPixelCount().gte(25)
+      
+      Export.image.toAsset({
+      image: result.updateMask(result_pxc),
+      assetId:ee.String('users/ocsgeospatial/cluster').cat(ee.String(firstSelect.getValue())),
+      //bucket: 'gee_lesotho_bucket',
+      //fileNamePrefix: ee.String('lesotho_landcover_td/cluster_').cat(ee.String(firstSelect.getValue())),
+      //shardSize: 512,
+      //fileDimensions: 512,
+      //skipEmptyTiles: true,
+      description: 'cluster',
+      scale: 10,
+      region: lesotho_boundaries.geometry(),
+      //fileFormat: 'GeoTIFF',
+      //formatOptions: {
+      //  cloudOptimized: true
+      //},
+      maxPixels: 1e11
+    });
+      
+      // Print out the frequency of landcover occurrence for each county
+      var frequency = result.reduceRegion({
+        geometry: geom,
+        scale: 40,
+        reducer:ee.Reducer.frequencyHistogram(),
+        bestEffort: true
+      });
+      
+      print(frequency);
+      var key_list = ee.Dictionary(frequency.get('cluster')).keys();
+      Map.addLayer(result.randomVisualizer(), {}, aez_val);
+
+    //var color_list = ee.List(['green', 'orange', 'brown', 'yellow', 'purple', 'red']);
+    
+    //print(color_list[0])
+    //var series_colors = key_list.map(function colorSeries(key){
+    //  return ['color', color_list[ee.Number.parse(key).subtract(1)]];
+    //}
+    //  );
+    //print(series_colors);
+    
+    // Pre-define some customization options.
+      var options = {
+        title: aez_val,
+        fontSize: 20,
+        hAxis: {title: 'NDVI'},
+        vAxis: {title: 'pixel count'},
+        series: {
+          0: {color: 'green'},
+          1: {color: 'orange'},
+          2: {color: 'brown'},
+          3: {color: 'black'},
+          4: {color: 'pink'}
+        }
+      };
+    
+    var image = key_list.iterate(function(key, previous){
+      previous = ee.Image(previous);
+      image = previous.updateMask(result.eq(ee.Number.parse(key))).select('NDVI_2').rename(ee.String(key));
+      return previous.addBands(image);
+    }, stacked_ndvi);
+    
+      // Make the histogram, set the options.
+    var histogram = ui.Chart.image.histogram({
+      image: ee.Image(image).select(key_list), 
+      region: geom, 
+      scale: 40,
+      maxPixels: 10e10
+    })
+        .setSeriesNames(key_list)
+        .setOptions(options);
+    
+    // Display the histogram.
+    print(histogram);
+    
+    return result;
+  }
+  
+    var clusterCheckbox = function (){
+    var checkbox1 = ui.Checkbox('green_cluster', false);
+    var checkbox2 = ui.Checkbox('orange_cluster', false);
+    var checkbox3 = ui.Checkbox('brown_cluster', false);
+    var checkbox4 = ui.Checkbox('black_cluster', false);
+    var checkbox5 = ui.Checkbox('pink_cluster', false);
+    return [checkbox1, checkbox2, checkbox3, checkbox4, checkbox5]
+    };
+
+  
+  var result1 = ee.Image(0);
+  var result2 = ee.Image(0);
+  var result3 = ee.Image(0);
+  var result4 = ee.Image(0);
+
+  var button1 = ui.Button({
+  label: 'Lowland Cluster',
+  onClick: function() {
+    var result = ee.Image(aez_kmeans(aez_values[0]));
+
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(5));
+    });
+    
+    print(button2);
+    return result1;
+    }
+  });
+  
+  print(button1);
+  
+  var button2 = ui.Button({
+  label: 'Senqu Cluster',
+  onClick: function() {
+    //Map.addLayer(result1.updateMask(result1.eq(1)), {}, 'merged clusters');
+    var result = ee.Image(aez_kmeans(aez_values[1]));
+    
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(5));
+    });
+
+      print(button3);
+      return result2;
+    }
+  });
+  
+    var button3 = ui.Button({
+  label: 'Foothill Cluster',
+  onClick: function() {
+    var result = ee.Image(aez_kmeans(aez_values[2]));
+    
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(5));
+    });
+
+      print(button4);
+      return result3;
+    }
+  });
+  
+    var button4 = ui.Button({
+  label: 'Mountain Cluster',
+  onClick: function() {
+    var result = ee.Image(aez_kmeans(aez_values[3]));
+    
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(5));
+    });
+      print(button5);
+      return result4;
+    }
+  });
+  
+  var button5 = ui.Button({
+     label: 'Display clusters',
+  onClick: function() {
+    var final_result = ee.ImageCollection([result1, result2, result3, result4]).mosaic();
+    Map.addLayer(final_result.updateMask(final_result.eq(1)), {}, 'merged clusters');
+    // Export the image, specifying scale and region.
+    Export.image.toAsset({
+      image: final_result.updateMask(final_result.eq(1)),
+      assetId:ee.String('users/ocsgeospatial/cluster').cat(ee.String(firstSelect.getValue())),
+      //bucket: 'gee_lesotho_bucket',
+      //fileNamePrefix: ee.String('lesotho_landcover_td/cluster_').cat(ee.String(firstSelect.getValue())),
+      //shardSize: 512,
+      //fileDimensions: 512,
+      //skipEmptyTiles: true,
+      description: 'cluster',
+      scale: 10,
+      region: lesotho_boundaries.geometry(),
+      //fileFormat: 'GeoTIFF',
+      //formatOptions: {
+      //  cloudOptimized: true
+      //},
+      maxPixels: 1e11
+    });
+    }
+  })
+  }
+});
+
+// Set a place holder.
+firstSelect.setPlaceholder('Choose a land cover class for spatio-semantic decomposition...');
+print(firstSelect);

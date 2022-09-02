@@ -1,0 +1,542 @@
+// ****************************************************************************************************************** //
+// ****************************** 4. Land Cover Post-Processing Workbench - Lesotho ********************************* //
+// ****************************************************************************************************************** //
+// This workbench picks up the harmonized landcover time series, and further processes it using a ruleset that aims to
+// reduce the commission errors of certain classes on the basis of external datasets (e.g. WSF, Google Open Buildings)
+// Moreover, the irrigated croplands and gullies are produced as part of this workbench and integrated into the land cover
+
+var params = require('users/ocsgeospatial/Lesotho:6-Parameters.js');
+var legend_utils = require('users/ocsgeospatial/Lesotho:8-LegendUtils.js');
+var LCParams = params.LCParams();
+
+// ****************************************************************************************************************** //
+var CLASS_NAME = LCParams['CLASS_NAME']; // Property name of the feature collection containing the crop type class attribute
+var AGG_INTERVAL = LCParams['AGG_INTERVAL']; // Number of days to use to create the temporal composite for 2020
+var S2_BAND_LIST = LCParams['BAND_LIST']; // S2 Bands to use as DTW input
+var VERSION_NO = LCParams['VERSION_NO']; // Version number of the land cover outputs produced
+var ALGO = LCParams['ALGO']; // Algorithm to apply. Default is Random Forest, as sufficient training data is available for 2021.
+// ****************************************************************************************************************** //
+
+// A dictionary that will be iterated over for multi-year land cover mapping.
+// Comment out the years you do not wish to produce.
+// First element of the dictionary value is the collection name, Second element the irrigate agriculture cluster to select
+var year_dict = LCParams['LC_YEARS'];
+
+// ****************************************************************************************************************** //
+// Import external dependencies
+var palettes = require('users/gena/packages:palettes');
+var wrapper = require('users/adugnagirma/gee_s1_ard:wrapper');
+var S2Masks = require('users/ocsgeospatial/functions:s2_masks.js');
+var composites = require('users/ocsgeospatial/functions:composites.js');
+
+// Import country geometry
+var county = ee.Feature(ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_boundaries").first()).simplify(100);
+
+// Class list
+var lc_classes = LCParams['LC_CLASSES'];
+
+/*
+// Corresponding color palette for the mapped land cover/crop classes
+var classification_palette = [
+  '#ea3f42', // 1.urban
+  '#fbd278', // 2.croplands
+  '#fbd278', // 3. degraded crop
+  '#527300', // 4. needleleaf
+  '#527300', // 5. broadleaf
+  '#164fab', // 6. water
+  '#7db4ff', // 7. wetlands
+  '#164fab',  // 8. river banks
+  '#a4e400', // 9. shrub
+  '#d8febc',  // 10. grass
+  '#d8febc', //11. degraded grass
+  '#fffebb', // 12. barren
+  '#fffebb',  // 13. mines
+  '#95dfa5', // 14. Irrigated Cropland
+  '#a4651d' // 15. Gullies
+];
+*/
+
+// The corresponding color hex keys for the land cover classes
+var classification_palette = LCParams['LC_PALETTE'];
+                
+// ****************************************************************************************************************** //
+
+// The monotemporal classification for 2021, prior to producing the harmonized time series
+var classification2021_mono = ee.Image('users/ocsgeospatial/Lesotho/rf_lesotho_s2_60_2021_postproc_new');
+// The first image in the time series (2017)
+var classification_postproc = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_2017'+VERSION_NO+'_harmonized');
+
+// The 2015 LCDB land cover dataset, remapped to the land cover nomenclature from 2021
+var classification2015 = ee.Image('users/ocsgeospatial/Lesotho/LCDB_Lesotho_v2_2')
+ .remap([11, 12, 21, 22, 23, 24, 31, 33, 41, 42, 43, 44, 51, 61, 62, 71, 72, 73, 74, 75, 13, 14, 25, 32, 34, 35, 36, 37, 52], 
+        [1, 1, 2, 2, 3, 14, 4, 5, 6, 6, 7, 8, 9, 10, 11, 12, 12, 12, 15, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0]).selfMask();
+
+// World Settlement footprints for 2015, 2019 and the difference between the two datasets.
+// These are used to harmonize the built-up class
+var wsf2015 = ee.ImageCollection("projects/sat-io/open-datasets/WSF/WSF_2015").mosaic().unmask(0);
+var wsf2019 = ee.ImageCollection("projects/sat-io/open-datasets/WSF/WSF_2019").mosaic().unmask(0);
+var wsf_dif = wsf2015.neq(wsf2019).selfMask();
+
+// Import ALOS AW3D30 latest DEM version v3.2
+//var dem = ee.ImageCollection("JAXA/ALOS/AW3D30/V3_2").select("DSM");
+//dem = dem.mosaic().setDefaultProjection(dem.first().select(0).projection());
+//var dem = ee.Image("USGS/SRTMGL1_003");
+var dem = ee.ImageCollection("projects/sat-io/open-datasets/FABDEM").mosaic();
+
+//Remove mountain areas that are not suitable for crop growth
+var slope = ee.Terrain.slope(dem); // Calculate slope from the DEM data
+var dem_mask = dem.gt(3600); // Mask elevation above 3600m, where no crops grow.
+var hand = ee.Image("MERIT/Hydro/v1_0_1").select('hnd');
+
+// Load Google Open Buildings layer to conflate the World Settlement Footprint layer
+var t = ee.FeatureCollection("GOOGLE/Research/open-buildings/v1/polygons").filterBounds(county.geometry());
+
+// Filter based on a 60% confidence threshold to only map higher confidence output
+var t_gte_060 = t.filter(ee.Filter.gte('confidence', 0.60));
+var buildings = t_gte_060.reduceToImage({
+                  properties: ['area_in_meters'],
+    reducer: ee.Reducer.first()
+});
+
+var road_network = ee.FeatureCollection('users/ocsgeospatial/Lesotho/hotosm_roads').filter(ee.Filter.inList('surface', 
+                   ['asphalt', 'paved', 'compacted', 'cobblestone', 'concrete', 'metal', 'paved', 'paving_stones', 'paving_stones:30']))
+                   .map(function(feat){return feat.set('val', 1)});
+                   
+var road_network_buf = road_network.map(function(feat){return feat.buffer(10);});
+var road_raster = road_network.reduceToImage({
+                  properties: ['val'],
+    reducer: ee.Reducer.first()
+}).unmask(0);
+
+var road_raster_buf = road_network_buf.reduceToImage({
+                  properties: ['val'],
+    reducer: ee.Reducer.first()
+}).unmask(0);
+
+var river_network = ee.FeatureCollection('users/ocsgeospatial/Lesotho/hotosm_waterways').filter(ee.Filter.inList('waterway', 
+                   ['canal', 'river'])).map(function(feat){return feat.set('val', 1)});
+
+var river_raster = river_network.reduceToImage({
+                  properties: ['val'],
+    reducer: ee.Reducer.first()
+}).unmask(0);
+
+// JRC Global Surface Water mask
+var not_water = ee.Image("JRC/GSW1_2/GlobalSurfaceWater").select('max_extent').eq(0);
+
+// Build a crop signature library to map the irrigated/non-irrigated cropland
+var signatures_crop = ee.FeatureCollection('users/ocsgeospatial/Lesotho/LandCover_Validation_Points2021')
+                      .filter(ee.Filter.eq('LC_Class_I', 2));
+var lacowiki_irrigated = ee.FeatureCollection('users/ocsgeospatial/Lesotho/lacowiki2021_validation').filter(ee.Filter.eq('ValValue', '14'))
+                        .map(function(feat){return ee.Feature(feat.centroid().geometry(), {'LC_Class_I': 14,
+                                                                                           'LC_Class_n': 'Irrigated Cropland'})});
+var manual_irrigated = ee.FeatureCollection('users/ocsgeospatial/Lesotho/irrigated_samples')
+                      .map(function(feat){return ee.Feature(feat.centroid().geometry(), {'LC_Class_I': 14,
+                                                                                          'LC_Class_n': 'Irrigated Cropland'})});
+var crop_signatures = signatures_crop.merge(manual_irrigated).merge(lacowiki_irrigated);
+
+// Iterate over each year and produce it's post-processed landcover
+Object.keys(year_dict).forEach(function(i) {
+
+  var year = i;
+  
+  // Load training data for a given year
+  var signatures = ee.FeatureCollection('users/ocsgeospatial/Lesotho/trainingData'+year)//.filter(ee.Filter.neq('LC_Class_I', 9));
+  var signatures_shrublandSurvey = ee.FeatureCollection('users/ocsgeospatial/Lesotho/trainingData2021_shrublandSurvey');
+  
+  var signatures_noninvasiveShrub = signatures_shrublandSurvey.filter(ee.Filter.and(ee.Filter.eq('land_cover', 'Shrubland'), 
+                                                                             ee.Filter.eq('is_the_spe', 'Non_Invasive')))
+                                                                             .map(function(feat){return feat.set('LC_Class_I', 9)});
+  var signatures_invasiveShrub = signatures_shrublandSurvey.filter(ee.Filter.and(ee.Filter.eq('land_cover', 'Shrubland'), 
+                                                                           ee.Filter.eq('is_the_spe', 'Invasive')))
+                                                                           .map(function(feat){return feat.set('LC_Class_I', 9)});
+  var signatures_trees = signatures_shrublandSurvey.filter(ee.Filter.eq('land_cover', 'Trees'))
+                                                                         .map(function(feat){return feat.set('LC_Class_I', 4)});
+  var signatures_grassland = signatures_shrublandSurvey.filter(ee.Filter.eq('land_cover', 'Grassland'))
+                                                                        .map(function(feat){return feat.set('LC_Class_I', 10)});      
+  var signatures_irrcropland = signatures_shrublandSurvey.filter(ee.Filter.eq('land_cover', 'Irrigated_Agriculture'))
+                                                                      .map(function(feat){return feat.set('LC_Class_I', 14)});   
+  signatures = signatures.merge(signatures_noninvasiveShrub)
+                         .merge(signatures_invasiveShrub)
+                         .merge(signatures_trees)
+                         .merge(signatures_grassland)
+                         .merge(signatures_irrcropland);
+  
+  var withRandom = signatures.randomColumn('random'); // Add a random column for train/test splitting
+  
+  // 80/20 train/test split
+  var val_signatures = withRandom.filter(ee.Filter.and(ee.Filter.gte('random', 0), ee.Filter.lt('random', 0.2)));
+  var train_signatures = withRandom.filter(ee.Filter.or(ee.Filter.lt('random', 0), ee.Filter.gte('random', 0.2)));
+  
+  // Pull forest, wetland and grassland classes apart as they are over-represented
+  var train_signatures_forest = train_signatures.filter(ee.Filter.eq(CLASS_NAME, 4)).randomColumn('random');
+  var train_signatures_wetland = train_signatures.filter(ee.Filter.eq(CLASS_NAME, 7)).randomColumn('random');
+  //var train_signatures_grassland = train_signatures.filter(ee.Filter.eq(CLASS_NAME, 10)).randomColumn('random');
+  
+  var train_signatures_len = train_signatures.size();
+  
+  //Limit their quantity to 100, 100 and 600 for forest, wetland and grassland respectively for training (to maintain a class balance)
+  var val_signatures_forest = train_signatures_forest.sort('random', false).limit(train_signatures_len.subtract(300));
+  var val_signatures_wetland = train_signatures_wetland.sort('random', false).limit(train_signatures_len.subtract(150));
+  //var val_signatures_grassland = train_signatures_grassland.sort('random', false).limit(train_signatures_len.subtract(800));
+  train_signatures_forest = train_signatures_forest.sort('random').limit(300);
+  train_signatures_wetland = train_signatures_wetland.sort('random').limit(150);
+  //train_signatures_grassland = train_signatures_grassland.sort('random').limit(800);
+  
+  // Merge the training and validation datasets back together
+  train_signatures = train_signatures.filter(ee.Filter.inList(CLASS_NAME, [4, 7]).not())
+       .merge(train_signatures_forest)
+       .merge(train_signatures_wetland)
+       //.merge(train_signatures_grassland);
+  val_signatures = val_signatures
+       .merge(val_signatures_forest)
+       .merge(val_signatures_wetland)
+       //.merge(val_signatures_grassland);
+  
+  // Import the harmonized land cover data for the given year
+  var classification = ee.Image('users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+VERSION_NO+'_harmonized');
+  
+  // Define the time range corresponding to the given year, to load data for the gullies and irrigated cropland classification
+  var date_range = ee.Dictionary({'start': year +'-01-01', 'end': year + '-12-31'}); // Second half of year used only.
+  // Load the Sentinel-2 collection for the time period and area requested
+  var s2_cl = S2Masks.loadImageCollection(year_dict[year], date_range, county.geometry());
+  
+  // Function to calculate the NDVI for planet mosaics
+  var addNDVI = function(img){
+    return img.addBands(img.normalizedDifference(['B8','B4']).multiply(10000).toInt16().rename('NDVI'));
+  };
+
+  // Perform cloud masking using the S2 cloud probabilities assets from s2cloudless,
+  // courtesy of Sentinelhub/EU/Copernicus/ESA
+  var masked_collection = s2_cl
+                          .filterDate(date_range.get('start'), date_range.get('end'))
+                          .map(S2Masks.addCloudShadowMask(not_water, 1e4))
+                          .map(S2Masks.applyCloudShadowMask)
+                          .map(addNDVI); // Add NDVI to band list
+  
+  // Generate a list of time intervals for which to generate a harmonized time series
+  var time_intervals = composites.extractTimeRanges(date_range.get('start'), date_range.get('end'), AGG_INTERVAL);
+  
+  // Generate harmonized monthly time series of FCover as input to the vegetation factor V
+  var s2_ts = composites.harmonizedTS(masked_collection, S2_BAND_LIST, time_intervals, {agg_type: 'geomedian'});
+  
+  // Replace masked pixels by the mean of the previous and next timestamps
+  // And add a Day of Year (DOY) band
+  // This is the linear interpolation approach,
+  // which is more lightweight than other gap-filling approaches like Savitzky-Golay or harmonic regression
+  var s2_gapfill = s2_ts
+                  .map(function(image){
+                    var currentDate = ee.Date(image.get('system:time_start'));
+                    var meanImage = s2_ts.filterDate(currentDate.advance(-AGG_INTERVAL-1, 'day'),
+                                                         currentDate.advance(AGG_INTERVAL+1, 'day')).mean();
+                    // replace all masked values
+                    var ddiff = currentDate.difference(ee.Date(ee.String(date_range.get('start'))), 'day');
+                    return meanImage.where(image, image).addBands(ee.Image(ddiff).rename('doy').toInt16());
+                  });
+  
+  // Convert the image collection to a multi-band image
+  var s2_stack = ee.Image(s2_gapfill.iterate(function(image, previous){return ee.Image(previous).addBands(image)}, ee.Image([])))
+                 .toInt16();
+
+  // Sample the crop reference data from the Sentinel-2 stack to perform K-means clustering
+  var crop_training = s2_stack.select('NDV.*').updateMask(classification.eq(2)).sampleRegions({
+          collection: crop_signatures,
+          scale: 10
+        });
+  
+  // Initialize a list of keys for plotting the clusters
+  var key_list = [1,2,3,4,5,6,7,8,9,10];
+  // Instantiate the clusterer and train it.
+  var clusterer = ee.Clusterer.wekaKMeans(2).train(crop_training);
+  
+  // Cluster the input using the trained clusterer.
+  var result = s2_stack.select('NDV.*').updateMask(classification.eq(2)).clip(county.geometry()).cluster(clusterer);
+  
+  // Add +1 to the output raster to ensure no cluster has 0 for value
+  result = result.expression('PRED + 1', {'PRED': result.select('cluster')}).toByte();
+
+  // Pre-define some customization options.
+  var options = {
+    title: 'clusters histogram',
+    fontSize: 20,
+    hAxis: {title: 'NDVI'},
+    vAxis: {title: 'pixel count'},
+    series: {
+      0: {color: 'green'},
+      1: {color: 'orange'},
+      2: {color: 'brown'},
+      3: {color: 'black'},
+      4: {color: 'pink'},
+      5: {color: '#C89D7C'},
+      6: {color: 'blue'},
+      7: {color: 'red'},
+      8: {color: 'yellow'},
+      9: {color: '#00008B'},
+    }
+  };
+  
+  // Prepare clusters histogram
+  var hist_image = ee.List(key_list).iterate(function(key, previous){
+    previous = ee.Image(previous);
+    var image = previous.updateMask(result.eq(ee.Number(key))).select('NDVI_2').rename(ee.String(key));
+    return previous.addBands(image);
+  }, s2_stack);
+  
+  var cluster_mean1 = ee.Number(s2_stack.select('NDVI_2').updateMask(result.eq(1)).reduceRegion({reducer: ee.Reducer.mean(), geometry: county.geometry(), scale: 250, tileScale: 4}).get('NDVI_2'));
+  var cluster_mean2 = ee.Number(s2_stack.select('NDVI_2').updateMask(result.eq(2)).reduceRegion({reducer: ee.Reducer.mean(), geometry: county.geometry(), scale: 250, tileScale: 4}).get('NDVI_2'));
+  var irr_cluster = ee.Number(ee.Algorithms.If(cluster_mean1.gt(cluster_mean2), 1, 2));
+  
+  // Make the histogram, set the options.
+  var histogram = ui.Chart.image.histogram({
+    image: ee.Image(hist_image).select(key_list), 
+    region: county.geometry(), 
+    scale: 40,
+    maxPixels: 10e13
+  })
+  .setSeriesNames(key_list)
+  .setOptions(options);
+    
+  // Display the histogram.
+  print(histogram);
+  
+  // Convert the Sentinel-2 stack to an array, in order to calculate its NDVI integral
+  var s2_arr = s2_gapfill.select('NDVI').toArray().arraySlice(0,0,3);
+  
+  var pw_mean = s2_arr.arraySlice(0,1).add(s2_arr.arraySlice(0,0,-1)).divide(2);
+  var s2_integ = pw_mean.arrayReduce('mean',[0]).abs().toArray()
+                            .arraySlice(0, 0, 1).arrayProject([0]).arrayFlatten([['array']]);
+  
+  // Only keep the irrigated pixels that have a Sentinel-2 NDVI integral > 5000 (scale 0-10000),
+  // Have a height above nearest drainage of less than 45m, a slope < 10°
+  var irrigated_count = result.eq(irr_cluster).and(s2_integ.gt(5000))
+                                    .and(slope.lte(10)).and(hand.lte(45)).selfMask().connectedPixelCount();
+  
+  // Generate the contrast and correlation metrics of the grey-level co-occurance matrix with a window size of 3 pixels (30m)
+  var glcm = s2_stack.select(['B2','B3','B4','B8']).glcmTexture({size: 3})
+             .select(['B4_contrast',"B4_corr",'B2_contrast',"B2_corr",'B3_contrast',"B3_corr",'B8_contrast',"B8_corr"]);
+       
+  // Merge the Sentinel-2 bands for the period May-June, and its corresponding textural features
+  var objectPropertiesImage = ee.Image.cat([
+    s2_stack.select(S2_BAND_LIST), 
+    glcm
+  ]).float();
+  
+  // Sample gullies/non-gullies reference points
+  var gullies_training = classification2015
+  .addBands(objectPropertiesImage)
+  //.updateMask(landcover_lesotho_mask.bitwiseAnd(landcover_lesotho_remapped.neq(0)))
+  .selfMask()
+  .stratifiedSample({
+    numPoints: 1000,
+    classBand: 'remapped',
+    scale: 10,
+    region: county.geometry(),
+    tileScale: 4
+  });
+  
+  // Make a Random Forest classifier and train it.
+  var classifier = ee.Classifier.smileRandomForest(50)
+      .train(
+        {features: gullies_training, 
+        classProperty:'remapped'}
+        );
+  
+  // Mask out non-gully classes
+  var gullies = objectPropertiesImage.clip(county.geometry()).classify(classifier).eq(15).selfMask();
+
+  // Visualize the Sentinel-2 NDVI integral
+  Map.addLayer(s2_integ.clip(county.geometry()), 
+               {palette: palettes.colorbrewer.RdYlGn[11], min:0, max: 8000}, 's2 integral');
+  // Visualize the Kmeans clusters for the Irrigated Cropland mapping procedure
+  Map.addLayer(result.randomVisualizer(), {}, 'Cluster Results');
+  // Visualize the irrigated cropland output class
+  Map.addLayer(irrigated_count.gte(100).selfMask().randomVisualizer(), {}, 'Irrigated Crops');
+  // Visualize the gullies output class
+  Map.addLayer(gullies, {palette: ['red'], min: 0, max: 1}, 'gullies classification');
+  
+  // Apply the post-processing classification rules for the validation metrics
+  var classification_val = //ee.Image('users/ocsgeospatial/Lesotho/rf_lesotho_s2_60_10bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc') 
+                          //.remap([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], [1,2,2,3,3,4,5,8,6,7,7,8,8,2,8])
+                          //.rename('classification_'+year).selfMask()
+                          //||
+                          classification
+                          // Convert cropland on steep slopes (>30°) to the 2021 monotemporal classification class at that location
+                          .where(slope.gt(30).and(classification.eq(2).or(classification.eq(3))), classification2021_mono) 
+                          // Convert water on slope > 10° and hand > 45m to the 2021 monotemporal classification class at that location
+                          .where(slope.gt(10).or(hand.gt(45)).and(classification.eq(6)), classification2021_mono)
+                          // Convert to irrigated agriculture if the irrigated croopland pixel group > 100 pixels
+                          .where(irrigated_count.gte(100), 14)
+                          // Convert wetland on slopes steeper than 20* and HAND > 90m to the 2021 monotemporal classification class at that location
+                          .where(slope.gt(20).or(hand.gt(90)).and(classification.eq(7)), classification2021_mono)
+                          // Gullies where land cover was cropland or bare soil in 2015, and height above nearest drainge < 45m
+                          .where(classification2015.eq(2).or(classification2015.eq(3)).or(classification2015.eq(12))
+                                 .and(gullies).and(hand.lte(45)).and(road_raster_buf.neq(1)), 15)
+                          // Carry over mines from 2020 output to 2021
+                          .where(classification2021_mono.eq(13), 12)
+                          // Make sure water is only occuring at bottom of watersheds, i.e. HAND < 45 m
+                          .where(hand.lte(45).and(classification.eq(6)).or(river_raster.eq(1)), 6) 
+                          // Conflate river banks from 2015 output to 2021
+                          //.where(classification2015.eq(8), 8)
+                          // Remove built-up areas that fall in the area of difference between WSF2019-2015
+                          .where(wsf_dif.focalMax(2.5, 'circle').reproject('EPSG:4326', null, 10), classification_postproc)
+                          // Burn in Google Open buildings
+                          .where(buildings.gt(0).or(wsf2019.eq(255)), 1)
+                          // Carry over gullies from previous years
+                          .where(classification2015.eq(15).or(classification_postproc.eq(15)), 15)
+                          // Remap to a continuous sequence of integers to avoid gaps in the confusion matrix
+                         .remap([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], [1,2,2,3,3,4,5,8,6,7,7,8,8,2,8])
+                         .rename('classification_'+year).selfMask();
+  
+  // Apply the post-processing classification rules for the final land cover output
+  classification_postproc = //ee.Image('users/ocsgeospatial/Lesotho/rf_lesotho_s2_60_10bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc')
+                           //|| 
+                           classification
+                           // Convert cropland on steep slopes (>30°) to the 2021 monotemporal classification class at that location
+                           .where(slope.gt(30).and(classification.eq(2).or(classification.eq(3))), classification2021_mono) 
+                           // Convert water on slope > 10° and hand > 45m to the 2021 monotemporal classification class at that location
+                           .where(slope.gt(10).or(hand.gt(45)).and(classification.eq(6)), classification2021_mono)
+                           // Convert to irrigated agriculture if the irrigated croopland pixel group > 100 pixels
+                           .where(irrigated_count.gte(100), 14)
+                           // Convert wetland on slopes steeper than 20* and HAND > 90m to the 2021 monotemporal classification class at that location
+                           .where(slope.gt(20).or(hand.gt(90)).and(classification.eq(7)), classification2021_mono)
+                           // Gullies where land cover was cropland or bare soil in 2015, and height above nearest drainge < 45m
+                           .where(classification2015.eq(2).or(classification2015.eq(3)).or(classification2015.eq(12))
+                                  .and(gullies).and(hand.lte(45)).and(road_raster_buf.neq(1)), 15)
+                           // Perform Sieving with a 2.5 pixel radius to make the output less noisy and more readable
+                           .focalMode(2.5, 'circle').reproject('EPSG:4326', null, 10)
+                           // Carry over mines from 2020 output to 2021
+                           .where(classification2021_mono.eq(13), 12) 
+                           // Make sure water is only occuring at bottom of watersheds, i.e. HAND < 45 m
+                           .where(hand.lte(45).and(classification.eq(6)).or(river_raster.eq(1)), 6)
+                           // Conflate river banks from 2020 output to 2021
+                           //.where(classification2015.eq(8), 8)
+                           // Remove built-up areas that fall in the area of difference between WSF2019-2015
+                           .where(wsf_dif.focalMax(2.5, 'circle').reproject('EPSG:4326', null, 10), classification_postproc)
+                           // Burn in Google Open buildings
+                           .where(buildings.gt(0).or(wsf2019.eq(255)), 1)
+                           // Carry over gullies from previous years
+                           .where(classification2015.eq(15).or(classification_postproc.eq(15)), 15)
+                           .rename('classification_'+year).selfMask();
+  
+  classification_val = classification_val                           
+                      // Remove wetlands around built-up areas
+                      .where(classification_val.eq(1).focalMax(5, 'circle').reproject('EPSG:4326', null, 10).and(classification_val.eq(7)), 2)
+                      .where(road_raster.eq(1), 1);
+  
+  classification_postproc = classification_postproc                           
+                            // Remove wetlands around built-up areas
+                            .where(classification_postproc.eq(1).focalMax(5, 'circle').reproject('EPSG:4326', null, 10).and(classification_postproc.eq(7)), 2)
+                            .where(road_raster.eq(1), 1);
+
+  // Sample data for the output validation (confusion matrix)
+  var validation_dtw = classification_val.sampleRegions({
+  collection: val_signatures.remap([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], [1,2,2,3,3,4,5,8,6,7,7,8,8,2,8], CLASS_NAME),
+  properties:[CLASS_NAME],
+  scale : 10, 
+  geometries: true,
+  tileScale: 4
+  });
+  
+  // Get a confusion matrix representing expected accuracy.
+  var dtw_testAccuracy = validation_dtw.errorMatrix(CLASS_NAME, 'classification_'+year);
+  print('Validation error matrix for RF: ', dtw_testAccuracy);
+  print('Validation producers accuracy for RF: ', dtw_testAccuracy.producersAccuracy());
+  print('Validation consumers accuracy for RF: ', dtw_testAccuracy.consumersAccuracy());
+  print('Validation overall accuracy for RF: ', dtw_testAccuracy.accuracy());
+  print('Validation kappa index for RF: ', dtw_testAccuracy.kappa());
+  
+  // Visualize the post-processed map and compare it to it's non post-processed version
+  Map.addLayer(classification.remap([1,2,4,6,7,9,10,12,14,15], [1,2,3,4,5,6,7,8,9,10]).clip(county.geometry()),
+               {palette: classification_palette, min: 1, max: 10},
+               'RF classification (60 days) '+year);
+  Map.addLayer(classification_postproc.remap([1,2,4,6,7,9,10,12,14,15], [1,2,3,4,5,6,7,8,9,10]).clip(county.geometry()),
+               {palette: classification_palette, min: 1, max: 10},
+               'RF classification (60 days) post-processed '+year);    
+               
+  // Export classified data. This is recommended to get the full extent of the data generated and saved,
+  // so it can be explored and consulted seamlessly.
+  
+  Export.image.toAsset({
+    image: classification_postproc.clip(county.geometry()).toByte(),
+    description: ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+VERSION_NO+'_harmonized_postproc',
+    assetId: 'users/ocsgeospatial/Lesotho/'+ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+VERSION_NO+'_harmonized_postproc',
+    region: county.geometry(),
+    crs: 'EPSG:4326',
+    scale: 10,
+    maxPixels:1e13,
+    pyramidingPolicy: 'MODE',
+  })
+  
+  /*
+  Export.map.toCloudStorage({
+    image: classification_postproc.clip(county.geometry()).toByte(),//.visualize({palette: classification_palette, min: 1, max: 15}),
+    description: ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc',//_colour',
+    bucket: 'fao-landcover-lesotho',
+   path: 'LCDB_EOSTAT/rf_lesotho_s2_60_10_bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc',//_colour',
+    region: county.geometry(),
+    writePublicTiles: true,
+    mapsApiKey: 'AIzaSyCfjbITuDsGYoYGYYmNjZXHNk0g4eU-ZaI',
+    bucketCorsUris: '*',
+    scale: 10,
+    skipEmptyTiles: true, 
+    fileFormat: 'png'
+  });
+  */
+  
+  /*
+  Export.image.toCloudStorage({
+    image: classification_postproc.clip(county.geometry()).toByte(),//.visualize({palette: classification_palette, min: 1, max: 15}),
+    description: ALGO.toLowerCase()+'_lesotho_s2_60_10bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc',//_colour',
+    bucket: 'fao-landcover-lesotho',
+    fileNamePrefix: 'LCDB_EOSTAT/rf_lesotho_s2_60_10_bands_kfold_'+year+'_'+VERSION_NO+'_harmonized_postproc',//_colour',
+    region: county.geometry(),
+    crs: 'EPSG:4326',
+    scale: 10,
+    maxPixels:1e13,
+    skipEmptyTiles: true, 
+    fileFormat: 'GeoTIFF',
+    formatOptions: {
+      cloudOptimized: true
+    }
+  });
+  */
+  
+  // Export the confusion matrix to drive
+  Export.table.toDrive({
+    collection: ee.FeatureCollection(ee.Feature(null, {matrix: dtw_testAccuracy.array()})),
+    description: 'errorMatrix_'+year+VERSION_NO+'_harmonized_postproc',
+    folder: 'GEE_folder',
+    fileNamePrefix: 'errorMatrix_'+year+VERSION_NO+'_harmonized_postproc'
+  })
+});
+
+// Create a legend for the different crop types
+// set position of panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Create legend title
+var legendTitle = ui.Label({
+  value: 'Legend',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+
+// Add the title to the panel
+legend.add(legendTitle);
+
+// Add color and and names
+for (var i = 0; i <= classification_palette.length-1; i++) {
+  legend.add(legend_utils.makeRow(classification_palette[i], Object.keys(lc_classes)[i]));
+  }
+
+// add legend to map (alternatively you can also print the legend to the console)
+Map.add(legend);

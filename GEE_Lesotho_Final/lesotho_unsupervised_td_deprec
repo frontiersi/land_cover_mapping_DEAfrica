@@ -1,0 +1,415 @@
+
+    /*
+    //var color_list = ee.List(['green', 'orange', 'brown', 'yellow', 'purple', 'red']);
+    
+    //print(color_list[0])
+    //var series_colors = key_list.map(function colorSeries(key){
+    //  return ['color', color_list[ee.Number.parse(key).subtract(1)]];
+    //}
+    //  );
+    //print(series_colors);
+    
+    // Pre-define some customization options.
+      var options = {
+        title: 'lesotho clusters',
+        fontSize: 20,
+        hAxis: {title: 'NDVI'},
+        vAxis: {title: 'pixel count'},
+        series: {
+          0: {color: 'green'},
+          1: {color: 'orange'},
+          2: {color: 'brown'},
+          3: {color: 'black'},
+          4: {color: 'pink'}
+        }
+      };
+    
+    var image = key_list.iterate(function(key, previous){
+      previous = ee.Image(previous);
+      image = previous.updateMask(result.eq(ee.Number.parse(key))).select('NDVI_2');
+      
+      //var key_mode = ee.ImageCollection(image.reduceRegion({
+      //                                   reducer: ee.Reducer.mode(), 
+      //                                   geometry: geom, 
+      //                                   scale: 40, 
+      //                                   maxPixels: 1e13, 
+      //                                   tileScale: 4})
+      //                                   .map(function(k, v){
+      //                                     return ee.Image(v).regexpRename('NDVI_', ee.String('mode_cluster').cat(ee.String(key)).cat('_NDVI'))
+      //                                   }).values()).toBands();
+      return previous.addBands(image.rename(ee.String(key)))
+                     //.addBands(key_mode);
+    }, stacked_composite);
+    
+      // Make the histogram, set the options.
+    var histogram = ui.Chart.image.histogram({
+      image: ee.Image(image), 
+      region: geom, 
+      scale: 40,
+      maxPixels: 10e10
+    })
+        .setSeriesNames(key_list)
+        .setOptions(options);
+    
+    // Display the histogram.
+    print(histogram);
+    
+    var empty = ee.Image().byte();
+    
+    // Paint the edges with different colors, display.
+    var outlines = empty.paint({
+      featureCollection: frequency.filter(ee.Filter.eq('LC_Class_I', lc_class)),
+      color: 'cluster',
+      width: 4
+    });
+    var palette = ['green', 'orange', 'brown', 'black', 'pink'];
+    Map.addLayer(outlines, {palette: palette, min:1, max: 5}, 'cluster samples');
+    
+    return result;
+    */
+  
+/*
+
+var secondSelect = ui.Select({
+  items: Object.keys(time_interval),
+  //onChange: function(key) {
+  //}
+});
+
+secondSelect.setPlaceholder("Select a year");
+print(secondSelect);
+
+var firstSelect = ui.Select({
+  items: Object.keys(lc_classes),
+  onChange: function(key) {
+    
+  var stacked_composite = createFeatures(lesotho_boundaries.geometry(), time_interval[secondSelect.getValue()]);
+  print(stacked_composite)
+  
+  Map.centerObject(lesotho_boundaries.geometry(), 10);
+  Map.addLayer(stacked_composite, {bands:['B8_4', 'B4_4', 'B3_4'], min:0, max:3000}, 'stacked_composite');
+  
+  var lc_class = ee.Number(ee.Dictionary(lc_classes).get(key));
+  var mask = landcover_lesotho.eq(lc_class);
+  
+  stacked_composite = stacked_composite.updateMask(mask);
+  
+  var training = stacked_composite.sampleRegions({
+        collection: landcover_td2021,
+        //properties: ['LC_Class_I'],
+        scale: 10
+      });
+
+  var aez_kmeans = function(){
+    var geom = lesotho_geom
+    //.filter(ee.Filter.eq('ZONE_NAME', ee.String(aez_val)))
+    .geometry();
+    
+    Map.centerObject(geom, 10);
+    //var stacked_ndvi = stacked_composite.select(['classification_2021', 'NDVI', 'NDVI_1', 'NDVI_2', 'NDVI_3', 'NDVI_4', 'NDVI_5'])
+    
+    //var training = stacked_ndvi.stratifiedSample({
+    //  numPoints: 1000,
+    //  classBand: 'classification_2021',
+    //  scale: 10,
+   //   region: geom,
+   //   //tileScale: 16
+   // });
+    
+    // Generic Function to remove a property from a feature
+    //var removeProperty = function(feat, property) {
+    //  var properties = feat.propertyNames()
+    //  var selectProperties = properties.filter(ee.Filter.neq('item', property))
+    //  return feat.select(selectProperties)
+    //};
+    
+    // Instantiate the clusterer and train it.
+    var clusterer = ee.Clusterer.wekaCascadeKMeans(ee.Number.parse(min_clusters.getValue()))
+                    .train(training);
+    
+    // Cluster the input using the trained clusterer.
+    var result = stacked_composite.clip(geom).cluster(clusterer)//.updateMask(mask);
+    
+    result = result.expression('PRED + 1', {'PRED': result.select('cluster')}).toByte();
+    
+    // Print out the frequency of landcover occurrence for each county
+    //var frequency = result.reduceRegion({
+    //  geometry: geom,
+    //  scale: 40,
+    //  reducer:ee.Reducer.frequencyHistogram(),
+    //  bestEffort: true
+    //});
+    
+    var frequency = result.sampleRegions({
+      collection: landcover_td2021.filter(ee.Filter.eq('LC_Class_I', lc_class)),
+      properties: ['LC_Class_I'],
+      scale: 10
+    });
+      
+    var freq_histogram = frequency.filter(ee.Filter.eq('LC_Class_I', lc_class)).aggregate_histogram('cluster');
+    var total_samples = ee.Number(freq_histogram.values().reduce(ee.Reducer.sum()));
+    
+    var freq_list = ee.FeatureCollection(freq_histogram.map(function(key, val){
+      return ee.Feature(null, {'cluster': key, 'count': val});
+    }).values())
+    .filter(ee.Filter.gt('count', total_samples.multiply(0.05)))
+    .aggregate_array('cluster');
+    
+    var frequency_filtered = frequency.filter(ee.Filter.inList('cluster', freq_list));
+    
+    print(frequency_filtered);
+    
+    var key_list = ee.Dictionary(frequency.get('cluster')).keys();
+    Map.addLayer(result.randomVisualizer(), {}, 'lesotho clusters');
+
+    //var color_list = ee.List(['green', 'orange', 'brown', 'yellow', 'purple', 'red']);
+    
+    //print(color_list[0])
+    //var series_colors = key_list.map(function colorSeries(key){
+    //  return ['color', color_list[ee.Number.parse(key).subtract(1)]];
+    //}
+    //  );
+    //print(series_colors);
+    
+    // Pre-define some customization options.
+      var options = {
+        title: 'lesotho clusters',
+        fontSize: 20,
+        hAxis: {title: 'NDVI'},
+        vAxis: {title: 'pixel count'},
+        series: {
+          0: {color: 'green'},
+          1: {color: 'orange'},
+          2: {color: 'brown'},
+          3: {color: 'black'},
+          4: {color: 'pink'}
+        }
+      };
+    
+    var image = key_list.iterate(function(key, previous){
+      previous = ee.Image(previous);
+      image = previous.updateMask(result.eq(ee.Number.parse(key))).select('NDVI_2');
+      
+      //var key_mode = ee.ImageCollection(image.reduceRegion({
+      //                                   reducer: ee.Reducer.mode(), 
+      //                                   geometry: geom, 
+      //                                   scale: 40, 
+      //                                   maxPixels: 1e13, 
+      //                                   tileScale: 4})
+      //                                   .map(function(k, v){
+      //                                     return ee.Image(v).regexpRename('NDVI_', ee.String('mode_cluster').cat(ee.String(key)).cat('_NDVI'))
+      //                                   }).values()).toBands();
+      
+      return previous.addBands(image.rename(ee.String(key)))
+                     //.addBands(key_mode);
+    }, stacked_composite);
+    
+      // Make the histogram, set the options.
+    var histogram = ui.Chart.image.histogram({
+      image: ee.Image(image), 
+      region: geom, 
+      scale: 40,
+      maxPixels: 10e10
+    })
+        .setSeriesNames(key_list)
+        .setOptions(options);
+    
+    // Display the histogram.
+    print(histogram);
+    
+    var empty = ee.Image().byte();
+    
+    // Paint the edges with different colors, display.
+    var outlines = empty.paint({
+      featureCollection: frequency.filter(ee.Filter.eq('LC_Class_I', lc_class)),
+      color: 'cluster',
+      width: 4
+    });
+    var palette = ['green', 'orange', 'brown', 'black', 'pink'];
+    Map.addLayer(outlines, {palette: palette, min:1, max: 5}, 'cluster samples');
+    
+    return result;
+  }
+  
+    var clusterCheckbox = function (){
+    var checkbox1 = ui.Checkbox('green_cluster', false);
+    var checkbox2 = ui.Checkbox('orange_cluster', false);
+    var checkbox3 = ui.Checkbox('brown_cluster', false);
+    var checkbox4 = ui.Checkbox('black_cluster', false);
+    var checkbox5 = ui.Checkbox('pink_cluster', false);
+    return [checkbox1, checkbox2, checkbox3, checkbox4, checkbox5]
+    };
+
+  
+  var result1 = ee.Image(0);
+  var result2 = ee.Image(0);
+  var result3 = ee.Image(0);
+  var result4 = ee.Image(0);
+
+  var button1 = ui.Button({
+  label: 'Lowland Cluster',
+  onClick: function() {
+    var result = ee.Image(aez_kmeans(aez_values[0]));
+
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result1 = result1.bitwiseOr(result.eq(5));
+    });
+    
+    print(button2);
+    return result1;
+    }
+  });
+  
+  print(button1);
+  
+  var button2 = ui.Button({
+  label: 'Senqu Cluster',
+  onClick: function() {
+    //Map.addLayer(result1.updateMask(result1.eq(1)), {}, 'merged clusters');
+    var result = ee.Image(aez_kmeans(aez_values[1]));
+    
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result2 = result2.bitwiseOr(result.eq(5));
+    });
+
+      print(button3);
+      return result2;
+    }
+  });
+  
+    var button3 = ui.Button({
+  label: 'Foothill Cluster',
+  onClick: function() {
+    var result = ee.Image(aez_kmeans(aez_values[2]));
+    
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result3 = result3.bitwiseOr(result.eq(5));
+    });
+
+      print(button4);
+      return result3;
+    }
+  });
+  
+    var button4 = ui.Button({
+  label: 'Mountain Cluster',
+  onClick: function() {
+    var result = ee.Image(aez_kmeans(aez_values[3]));
+    
+    var checkboxes = clusterCheckbox();
+    print(checkboxes[0]);
+    print(checkboxes[1]);
+    print(checkboxes[2]);
+    print(checkboxes[3]);
+    print(checkboxes[4]);
+    
+    checkboxes[0].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(1));
+    });
+    checkboxes[1].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(2));
+    });
+    checkboxes[2].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(3));
+    });
+    checkboxes[3].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(4));
+    });
+    checkboxes[4].onChange(function() {
+    result4 = result4.bitwiseOr(result.eq(5));
+    });
+      print(button5);
+      return result4;
+    }
+  });
+  print(firstSelect.getValue())
+  
+  var button5 = ui.Button({
+     label: 'Display clusters',
+  onClick: function() {
+    var final_result = ee.ImageCollection([result1, result2, result3, result4]).mosaic();
+    Map.addLayer(final_result.updateMask(final_result.eq(1)), {}, 'merged clusters');
+    // Export the image, specifying scale and region.
+    Export.image.toAsset({
+      image: final_result.updateMask(final_result.eq(1)),
+      assetId:ee.String('users/ocsgeospatial/cluster').cat(ee.String(firstSelect.getValue())),
+      //bucket: 'gee_lesotho_bucket',
+      //fileNamePrefix: ee.String('lesotho_landcover_td/cluster_').cat(ee.String(firstSelect.getValue())),
+      //shardSize: 512,
+      //fileDimensions: 512,
+      //skipEmptyTiles: true,
+      description: 'cluster',
+      scale: 10,
+      region: lesotho_boundaries.geometry(),
+      //fileFormat: 'GeoTIFF',
+      //formatOptions: {
+      //  cloudOptimized: true
+      //},
+      maxPixels: 1e11
+    });
+    }
+  })
+  }
+});
+
+// Set a place holder.
+firstSelect.setPlaceholder('Choose a land cover class for spatio-semantic decomposition...');
+print(firstSelect);
+*/

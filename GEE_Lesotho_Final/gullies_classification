@@ -1,0 +1,295 @@
+//var lesotho_geom = ee.FeatureCollection("users/ocsgeospatial/lesotho_boundaries")
+//  .filter(ee.Filter.eq('region', 'MEA'));
+var lesotho_geom = ee.FeatureCollection("users/ocsgeospatial/Lesotho/lesotho_aez")
+.filter(ee.Filter.eq('ZONE_NAME', 'Lowland'));
+var geometry = lesotho_geom.geometry();
+
+//lesotho_geom = ee.Feature(lesotho_geom.first()).setGeometry(geometry);
+
+var cld = require('users/fitoprincipe/geetools:cloud_masks');
+
+// Load a FeatureCollection of counties in Maine.
+var landcover_lesotho = ee.Image('users/ocsgeospatial/Lesotho/LCDB_Lesotho_v2_2');
+//var landcover_lesotho_remapped = ee.Image('users/ocsgeospatial/Lesotho/rf_lesotho_s2_60_2021_full_new').rename('remapped');
+var landcover_lesotho_mask = ee.Image('users/ocsgeospatial/Lesotho/lesotho_cluster_mask_new');
+//var lesotho_aez = ee.FeatureCollection('users/ocsgeospatial/lesotho_aez')
+//  .filter(ee.Filter.eq('ZONE_CODE', '4'));
+
+var s2_1 = ee.ImageCollection("COPERNICUS/S2_SR")
+.filterDate('2020-11-01', '2020-12-31')
+.filterBounds(lesotho_geom.geometry())
+.filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 90);
+
+var s2_2 = ee.ImageCollection("COPERNICUS/S2_SR")
+.filterDate('2021-01-01', '2021-02-28')
+.filterBounds(lesotho_geom.geometry())
+.filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 90);
+
+var s2_3 = ee.ImageCollection("COPERNICUS/S2_SR")
+.filterDate('2021-03-01', '2021-04-30')
+.filterBounds(lesotho_geom.geometry())
+.filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 90);
+
+var s2_4 = ee.ImageCollection("COPERNICUS/S2_SR")
+.filterDate('2021-05-01', '2021-06-30')
+.filterBounds(lesotho_geom.geometry())
+.filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 90);
+
+var s2_5 = ee.ImageCollection("COPERNICUS/S2_SR")
+.filterDate('2021-07-01', '2021-08-30')
+.filterBounds(lesotho_geom.geometry())
+.filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 90);
+
+var s2_6 = ee.ImageCollection("COPERNICUS/S2_SR")
+.filterDate('2021-09-01', '2021-10-31')
+.filterBounds(lesotho_geom.geometry())
+.filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 90);
+
+var addNDVI = function(image) {
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  return image.addBands(ndvi);
+};
+
+var addNDWI = function(image) {
+  var ndwi = image.normalizedDifference(['B3', 'B8']).rename('NDWI');
+  return image.addBands(ndwi);
+};
+
+var maskCloud = function(image) {
+  var cloud_mask = cld.sclMask(['cloud_medium', 'cloud_high'])(image)
+  return image.addBands(cloud_mask);
+};
+
+// Test the addNDVI function on a single image.
+var s2_ndvi_1 = s2_1.map(addNDVI).map(maskCloud);
+var s2_ndvi_2 = s2_2.map(addNDVI).map(maskCloud);
+var s2_ndvi_3 = s2_3.map(addNDVI).map(maskCloud);
+var s2_ndvi_4 = s2_4.map(addNDVI).map(maskCloud);
+var s2_ndvi_5 = s2_5.map(addNDVI).map(maskCloud);
+var s2_ndvi_6 = s2_6.map(addNDVI).map(maskCloud);
+
+// Compute the maximum NDVI in each band, each pixel.
+// Band names are B1_median, B2_median, etc.
+var s2_maxndvi_1 = s2_ndvi_1.qualityMosaic('NDVI_1').select(['B2_1','B3_1','B4_1','B8_1','NDVI_1'], ['B2','B3','B4','B8','NDVI']);
+var s2_maxndvi_2 = s2_ndvi_2.qualityMosaic('NDVI_1').select(['B2_1','B3_1','B4_1','B8_1','NDVI_1'], ['B2','B3','B4','B8','NDVI']);
+var s2_maxndvi_3 = s2_ndvi_3.qualityMosaic('NDVI_1').select(['B2_1','B3_1','B4_1','B8_1','NDVI_1'], ['B2','B3','B4','B8','NDVI']);
+var s2_maxndvi_4 = s2_ndvi_4.qualityMosaic('NDVI_1').select(['B2_1','B3_1','B4_1','B8_1','NDVI_1'], ['B2','B3','B4','B8','NDVI']);
+var s2_maxndvi_5 = s2_ndvi_5.qualityMosaic('NDVI_1').select(['B2_1','B3_1','B4_1','B8_1','NDVI_1'], ['B2','B3','B4','B8','NDVI']);
+var s2_maxndvi_6 = s2_ndvi_6.qualityMosaic('NDVI_1').select(['B2_1','B3_1','B4_1','B8_1','NDVI_1'], ['B2','B3','B4','B8','NDVI']);
+
+var igbpPalette = [
+  'cc0013', // 1.urban
+  'cdb33b', // 2.croplands
+  '33280d', // 3. degraded crop
+  '152106', // 4. needleleaf
+  '387242', // 5. broadleaf
+  'aec3d4', // 6. water
+  '111149', // 7. wetlands
+  '6f6f6f',  // 8. river banks
+  '6a2325', // 9. shrub
+  '91af40',  // 10. grass
+  'd9903d', //11. degraded grass
+  'f7e084', // 12. barren
+  '6f6f6f'  // 13. mines
+];
+
+var landcover_lesotho_remapped = landcover_lesotho.remap([11, 12, 21, 22, 23, 24, 31, 33, 41, 42, 43, 44, 51, 61, 62, 71, 72, 73, 74, 75, 13, 14, 25, 32, 34, 35, 36, 37, 52], [1, 1, 2, 2, 3, 14, 4, 5, 6, 6, 7, 8, 9, 10, 11, 12, 12, 12, 15, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+var mask = landcover_lesotho_remapped.updateMask(landcover_lesotho_mask.bitwiseAnd(landcover_lesotho_remapped.neq(0)))
+//var mask = landcover_lesotho_remapped.selfMask();
+
+var ndviGradient_1 = s2_maxndvi_1.select('NDVI').gradient().pow(2).reduce('sum').sqrt().rename('NDVI_GRAD');
+var ndviGradient_2 = s2_maxndvi_2.select('NDVI').gradient().pow(2).reduce('sum').sqrt().rename('NDVI_GRAD');
+var ndviGradient_3 = s2_maxndvi_3.select('NDVI').gradient().pow(2).reduce('sum').sqrt().rename('NDVI_GRAD');
+var ndviGradient_4 = s2_maxndvi_4.select('NDVI').gradient().pow(2).reduce('sum').sqrt().rename('NDVI_GRAD');
+var ndviGradient_5 = s2_maxndvi_5.select('NDVI').gradient().pow(2).reduce('sum').sqrt().rename('NDVI_GRAD');
+var ndviGradient_6 = s2_maxndvi_6.select('NDVI').gradient().pow(2).reduce('sum').sqrt().rename('NDVI_GRAD');
+
+var square = ee.Kernel.square({radius: 4});
+
+var entropy_1 = s2_maxndvi_1.select('B8').entropy(square);
+var entropy_2 = s2_maxndvi_2.select('B8').entropy(square);
+var entropy_3 = s2_maxndvi_3.select('B8').entropy(square);
+var entropy_4 = s2_maxndvi_4.select('B8').entropy(square);
+var entropy_5 = s2_maxndvi_5.select('B8').entropy(square);
+var entropy_6 = s2_maxndvi_6.select('B8').entropy(square);
+
+var glcm_1 = s2_maxndvi_1.select('B8').glcmTexture({size: 4});
+var glcm_2 = s2_maxndvi_2.select('B8').glcmTexture({size: 4});
+var glcm_3 = s2_maxndvi_3.select('B8').glcmTexture({size: 4});
+var glcm_4 = s2_maxndvi_4.select('B8').glcmTexture({size: 4});
+var glcm_5 = s2_maxndvi_5.select('B8').glcmTexture({size: 4});
+var glcm_6 = s2_maxndvi_6.select('B8').glcmTexture({size: 4});
+
+var stacked_composite = landcover_lesotho_remapped
+.addBands(s2_maxndvi_1).addBands(glcm_1.select(['B8_contrast','B8_asm',"B8_corr"])).addBands(entropy_1).addBands(ndviGradient_1)
+.addBands(s2_maxndvi_2).addBands(glcm_2.select(['B8_contrast','B8_asm',"B8_corr"])).addBands(entropy_2).addBands(ndviGradient_2)
+.addBands(s2_maxndvi_3).addBands(glcm_3.select(['B8_contrast','B8_asm',"B8_corr"])).addBands(entropy_3).addBands(ndviGradient_3)
+.addBands(s2_maxndvi_4).addBands(glcm_4.select(['B8_contrast','B8_asm',"B8_corr"])).addBands(entropy_4).addBands(ndviGradient_4)
+.addBands(s2_maxndvi_5).addBands(glcm_5.select(['B8_contrast','B8_asm',"B8_corr"])).addBands(entropy_5).addBands(ndviGradient_5)
+.addBands(s2_maxndvi_6).addBands(glcm_6.select(['B8_contrast','B8_asm',"B8_corr"])).addBands(entropy_6).addBands(ndviGradient_6);
+//.select(['remapped', 'NDVI', 'NDVI_1', 'NDVI_2', 'NDVI_3', 'NDVI_4', 'NDVI_5']);
+
+var snic_stac = s2_maxndvi_6;
+//.addBands(s2_maxndvi_2)
+//.addBands(s2_maxndvi_3)
+//.addBands(s2_maxndvi_4)
+//.addBands(s2_maxndvi_5)
+//.addBands(s2_maxndvi_6);
+
+// Prepare SNIC
+var kernel = ee.Kernel.gaussian(3);
+var img = snic_stac;//.convolve(kernel);
+
+//var seeds = ee.Algorithms.Image.Segmentation.seedGrid(3);
+//var snic_segmentation = ee.Algorithms.Image.Segmentation.SNIC({
+//  image: img,
+//  compactness: 0,
+//  connectivity: 8,
+//  neighborhoodSize: 32,
+//  size: 3,
+//  seeds: seeds
+//})//.reproject({
+//  crs: 'EPSG:4326',
+//  scale: 10
+//});
+
+//var clusters_snic = snic_segmentation.select("clusters");
+//var stdDev = img.addBands(clusters_snic).reduceConnectedComponents(ee.Reducer.stdDev(), 'clusters', 256);
+//var area = ee.Image.pixelArea().addBands(clusters_snic).reduceConnectedComponents(ee.Reducer.sum(), 'clusters', 256);
+//var minMax = clusters_snic.reduceNeighborhood(ee.Reducer.minMax(), ee.Kernel.square(1));
+//var perimeterPixels = minMax.select(0).neq(minMax.select(1)).rename('perimeter');
+//var perimeter = perimeterPixels.addBands(clusters_snic).reduceConnectedComponents(ee.Reducer.sum(), 'clusters', 256);
+    
+//var sizes = ee.Image.pixelLonLat().addBands(clusters_snic).reduceConnectedComponents(ee.Reducer.minMax(), 'clusters', 256)
+//var width = sizes.select('longitude_max').subtract(sizes.select('longitude_min')).rename('width')
+//var height = sizes.select('latitude_max').subtract(sizes.select('latitude_min')).rename('height')
+var glcm = img.select(['B2','B3','B4','B8']).glcmTexture({size: 3})
+.select(['B4_contrast',"B4_corr",'B2_contrast',"B2_corr",'B3_contrast',"B3_corr",'B8_contrast',"B8_corr"])//.convolve(kernel);
+//.addBands(clusters_snic).reduceConnectedComponents(ee.Reducer.mean(), 'clusters', 256);
+
+//var entropy = img.select(['B2','B3','B4','B8']).entropy(ee.Kernel.square({radius: 1}));
+//.addBands(clusters_snic).reduceConnectedComponents(ee.Reducer.mean(), 'clusters', 256);
+
+Map.addLayer(glcm.select('B3_contrast').convolve(kernel), null, 'glcm contrast');
+
+var palettes = require('users/gena/packages:palettes');
+var palette = palettes.misc.tol_rainbow[7];
+
+var objectPropertiesImage = ee.Image.cat([
+  //snic_segmentation.select(["B2_mean", "B3_mean", "B4_mean", "B8_mean", "NDVI_mean"]),
+  img,
+  glcm
+  //entropy,
+  //stdDev,
+  //area,
+  //perimeter,
+  //width,
+  //height
+]).float();
+
+
+//Map.addLayer(landcover_lesotho_remapped, {palette: igbpPalette, min: 1, max: 13}, 'landcover_2015');
+//Map.addLayer(stacked_composite, {bands:['NDVI_6', 'NDVI_4', 'NDVI_2'], min:-0.2, max:1}, 'stacked_composite_1');
+var training = landcover_lesotho_remapped
+.addBands(objectPropertiesImage)
+//.updateMask(landcover_lesotho_mask.bitwiseAnd(landcover_lesotho_remapped.neq(0)))
+.selfMask()
+.stratifiedSample({
+  numPoints: 1000,
+  classBand: 'remapped',
+  scale: 10,
+  region: geometry,
+  tileScale: 8,
+  seed: 0});
+  
+// Make a Random Forest classifier and train it.
+var classifier = ee.Classifier.smileRandomForest(50)
+    .train(
+      {features: training, 
+      classProperty:'remapped'}
+      );
+      
+var classified = objectPropertiesImage.classify(classifier);
+
+// Classify the input imagery.
+//var mask = ee.Image.constant(1).clip(lesotho_geom.geometry()).mask();
+
+//var classified = stacked_composite.updateMask(mask).classify(classifier);
+
+// Get a confusion matrix representing resubstitution accuracy.
+var trainAccuracy = classifier.confusionMatrix();
+print('Resubstitution error matrix: ', trainAccuracy);
+print('Training overall accuracy: ', trainAccuracy.accuracy());
+
+var validation = landcover_lesotho_remapped
+.addBands(objectPropertiesImage).selfMask()//.updateMask(landcover_lesotho_mask.bitwiseAnd(landcover_lesotho_remapped.neq(0)))
+.stratifiedSample({
+  numPoints: 100,
+  classBand: 'remapped',
+  scale: 10,
+  region: geometry,
+  tileScale: 8,
+  seed: 1});
+
+// Classify the validation data.
+var validated = validation.classify(classifier);
+
+// Get a confusion matrix representing expected accuracy.
+var testAccuracy = validated.errorMatrix('remapped','classification');
+print('Validation error matrix: ', testAccuracy);
+print('Validation overall accuracy: ', testAccuracy.accuracy());
+
+// Display the input and the classification.
+Map.centerObject(geometry, 10);
+Map.addLayer(classified.eq(15), {palette: igbpPalette, min: 0, max: 1}, 'classification');
+//Map.addLayer(classified.eq(15).convolve(kernel), {palette: igbpPalette, min: 0, max: 1}, 'classification');
+
+// Export the image, specifying scale and region.
+Export.image.toDrive({
+  image: classified.eq(15),
+  description: 'classification',
+  scale: 10,
+  region: lesotho_geom.geometry(),
+  fileFormat: 'GeoTIFF',
+  formatOptions: {
+    cloudOptimized: true
+  },
+  maxPixels: 1e10
+});
+
+var exportAccuracy = ee.Feature(null, {matrix: testAccuracy.array()})
+
+// Export the FeatureCollection.
+Export.table.toDrive({
+  collection: ee.FeatureCollection(exportAccuracy),
+  description: 'exportAccuracy',
+  fileFormat: 'CSV'
+});
+
+// Print out the frequency of landcover occurrence for each county
+var frequency = classified.reduceRegion({
+  geometry: geometry,
+  scale: 10,
+  reducer:ee.Reducer.frequencyHistogram(),
+  bestEffort: true
+});
+
+print(frequency);
+
+var dict = classifier.explain();
+print('Explain:',dict);
+ 
+var variable_importance = ee.Feature(null, ee.Dictionary(dict).get('importance'));
+ 
+var chart =
+ui.Chart.feature.byProperty(variable_importance)
+.setChartType('ColumnChart')
+.setOptions({
+title: 'Random Forest Variable Importance',
+legend: {position: 'none'},
+hAxis: {title: 'Bands'},
+vAxis: {title: 'Importance'}
+});
+ 
+print(chart);
