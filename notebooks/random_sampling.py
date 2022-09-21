@@ -1,3 +1,6 @@
+
+# A function to create stratified randomly sampled points from a classification map.
+# adapted from Chad Burton: https://gist.github.com/cbur24/04760d645aa123a3b1817b07786e7d9f
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -139,7 +142,7 @@ def random_sampling(da,
     gdf = gpd.GeoDataFrame(
         all_samples,
         #crs=da.crs,
-        crs=da.spatial_ref,
+        crs=da.spatial_ref, # change made here as attribute ds.crs may not exist
         geometry=gpd.points_from_xy(x,y)).reset_index()
 
     gdf = gdf.drop(['x', 'y'],axis=1)
