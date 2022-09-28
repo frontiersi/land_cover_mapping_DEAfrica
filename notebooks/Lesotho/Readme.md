@@ -1,4 +1,4 @@
-This folder contains jupyter notebooks replicating FAO's existing land cover mapping workflow for Lesotho in GEE. Running the notebooks requires access to DEAfrica sandbox. To run through the workflow:
+This folder contains jupyter notebooks replicating FAO's existing workflow in GEE for land cover mapping across Lesotho. Running the notebooks requires access to DEAfrica sandbox and you many need to change input/output data locations in the scripts. Input datasets required are copied into 'Data' folder except the GoogleBuldings layer which is too large to upload to github. Output data were mostly not uploaded to 'Results' folder to save space, so you need to run the scripts to generate country-wide outputs. To run through the workflow:
 
 1. Extract training features using unfiltered training data by running 'Extract_training_data_GEE_replicate.ipynb'
 
@@ -16,4 +16,4 @@ This folder contains jupyter notebooks replicating FAO's existing land cover map
 
 8. Morphological processing, rule-based reclassification using information from external layers by running 'Post_process_all_others.ipynb'
 
-Note that for comparison these modules are trying to replicate as much as possible the implementation in GEE, which means no improvements or changes were made to some implementations even though they are in a very hard way or not optimal (e.g. cross validation, simple scaling before clustering).
+Note that for comparison these modules are trying to replicate as much as possible the implementation in GEE, which means no improvements or changes were made to some implementations (e.g. cross validation, feature normalisation for clustering) even though they were in a very hard way or not optimal.
