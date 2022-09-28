@@ -3,3 +3,13 @@
 .ipynb_checkpoints/README-checkpoint.md
 notebooks/.ipynb_checkpoints/Query_export_S2_data-checkpoint.ipynb
 notebooks/Lesotho/.ipynb_checkpoints/Evaluate_fit_classifier_GEE_replicate-checkpoint.ipynb
+notebooks/Lesotho/.ipynb_checkpoints/Extract_training_data_GEE_replicate-checkpoint.ipynb
+notebooks/Lesotho/.ipynb_checkpoints/Filter_training_data_GEE_replicate-checkpoint.ipynb
+notebooks/Lesotho/.ipynb_checkpoints/Land_cover_classification_GEE_replicate-checkpoint.ipynb
+notebooks/Lesotho/.ipynb_checkpoints/Post_process_all_others-checkpoint.ipynb
+notebooks/Lesotho/.ipynb_checkpoints/Post_process_reclassify_gully-checkpoint.ipynb
+notebooks/Lesotho/.ipynb_checkpoints/Post_process_reclassify_irrigated_croplands-checkpoint.ipynb
+notebooks/Lesotho/.ipynb_checkpoints/Readme-checkpoint.md
+notebooks/workshop/.ipynb_checkpoints/0_Extract_Training_Data-checkpoint.ipynb
+notebooks/workshop/.ipynb_checkpoints/1_Clean_Extract_Training_Data-checkpoint.ipynb
+notebooks/workshop/.ipynb_checkpoints/4_Post_Process_Irrigated_Croplands-checkpoint.ipynb
