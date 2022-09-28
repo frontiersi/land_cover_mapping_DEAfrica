@@ -1,10 +1,21 @@
 # land_cover_mapping_DEAfrica
 
 ## What this repository does
-This repository contains codes and data for land cover mapping of Lesotho using DE Africa Sandbox and Sentinel-2 satellite images of year 2021. The python codes are migrated from a JavaScript repository in GEE provided by Food and Agriculture (FAO). Training and supplementary data are also provided by FAO.
+This repository contains scripts and data for FAO's land cover mapping workflow implemented through DE Africa Sandbox. 
 
-## List of folders and files
-- Supplementary_Data: folder containing shapefiles used for pre-/post-processing
-- modules: Python script modules for processing
-- notebooks: Jupyter Notebooks demonstrating the classification workflow
-- GEE_Lesotho: a copy of the GEE JavaScript repository provided by FAO
+## Folders structures and description
+├── GEE_Lesotho: copy of FAO's old GEE repository of land cover mapping scripts in JavaScript
+├── GEE_Lesotho_Final: copy of FAO's confirmed final version of GEE repository of land cover mapping scripts in JavaScript
+├── notebooks: contains common modules used for the workflows for each country
+    ├── Lesotho: working scripts in jupyter notebooks used for Lesotho land cover map 2021 production
+    │   ├── Data: input data required for running Lesotho scripts
+    │   ├── Results: folder to export intermediate and final output data generated from the scripts
+    ├── Mozambique: working scripts in jupyter notebooks used for Mozambique land cover map 2021 production
+    │   ├── Data: input data required for running Lesotho scripts
+    │   ├── Results: folder to export intermediate and final output data generated from the scripts
+    ├── Rwanda: working scripts in jupyter notebooks used for Rwanda land cover map 2021 production
+    │   ├── Data: input data required for running Lesotho scripts
+    │   ├── Results: folder to export intermediate and final output data generated from the scripts
+    ├── workshop: jupyter notebooks used for online workshop demonstration
+    │   ├── Data: input data required for running Lesotho scripts
+    │   ├── Results: folder to export intermediate and final output data generated from the scripts
