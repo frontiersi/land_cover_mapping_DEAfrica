@@ -13,9 +13,9 @@ This repository contains scripts and data for FAO's land cover mapping workflow 
     ├── Mozambique: working scripts in jupyter notebooks used for Mozambique land cover map 2021 production  
     │   ├── Data  
     │   ├── Results  
-    ├── Rwanda: working scripts in jupyter notebooks used for Rwanda land cover map 2021 production
+    ├── Rwanda: working scripts in jupyter notebooks used for Rwanda land cover map 2021 production  
     │   ├── Data  
     │   ├── Results  
-    ├── workshop: jupyter notebooks used for online workshop demonstration
+    ├── workshop: jupyter notebooks used for online workshop demonstration  
     │   ├── Data  
     │   ├── Results  
