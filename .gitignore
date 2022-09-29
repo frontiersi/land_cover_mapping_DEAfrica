@@ -33,3 +33,5 @@ notebooks/Mozambique/.ipynb_checkpoints/1_Clean_training_data-checkpoint.ipynb
 notebooks/Mozambique/.ipynb_checkpoints/2_Evaluate_fit_classifier-checkpoint.ipynb
 notebooks/Mozambique/.ipynb_checkpoints/3_Land_cover_classification-checkpoint.ipynb
 notebooks/Mozambique/.ipynb_checkpoints/4_Post_processing-checkpoint.ipynb
+notebooks/Rwanda/.ipynb_checkpoints/random_sampling-checkpoint.py
+notebooks/Rwanda/.ipynb_checkpoints/0_Extract_stratified_training_points-checkpoint.ipynb
