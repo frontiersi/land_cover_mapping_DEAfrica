@@ -4,7 +4,7 @@ This folder contains jupyter notebooks replicating FAO's existing workflow in GE
 
 2. Produce baseline/reference land cover map using the extracted training features by running 'Land_cover_classification_GEE_replicate.ipynb'
 
-3. Extract and filter training features using the baseline/reference land cover map by running 'Filter_training_data_GEE_replicate.ipynb'
+3. Extract and filter training points using the baseline/reference land cover map by running 'Filter_training_data_GEE_replicate.ipynb'
 
 4. Evaluate and fit random forest classifier using the filtered training features by running 'Evaluate_fit_classifier_GEE_replicate.ipynb'
 
