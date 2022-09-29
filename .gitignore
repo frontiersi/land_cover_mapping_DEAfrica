@@ -28,3 +28,8 @@ notebooks/Rwanda/.ipynb_checkpoints/4_Land_Cover_Classification_v2_Rwanda-checkp
 notebooks/Rwanda/.ipynb_checkpoints/5.1_Post_Process_Irrigated_Croplands_Rwanda_v2-checkpoint.ipynb
 notebooks/Rwanda/.ipynb_checkpoints/5.3_Post_Process_All_Others_Rwanda-checkpoint.ipynb
 notebooks/Rwanda/.ipynb_checkpoints/Generate_stratified_sampling_AOIs-checkpoint.ipynb
+notebooks/Mozambique/.ipynb_checkpoints/0_Extract_stratified_training_points-checkpoint.ipynb
+notebooks/Mozambique/.ipynb_checkpoints/1_Clean_training_data-checkpoint.ipynb
+notebooks/Mozambique/.ipynb_checkpoints/2_Evaluate_fit_classifier-checkpoint.ipynb
+notebooks/Mozambique/.ipynb_checkpoints/3_Land_cover_classification-checkpoint.ipynb
+notebooks/Mozambique/.ipynb_checkpoints/4_Post_processing-checkpoint.ipynb
