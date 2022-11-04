@@ -8,7 +8,8 @@ def random_sampling(da,
                     n,
                     sampling='stratified_random',
                     manual_class_ratios=None,
-                    out_fname=None
+                    out_fname=None,
+                    class_attr='class'
                    ):
     
     """
@@ -42,6 +43,9 @@ def random_sampling(da,
         If providing a filepath name, e.g 'sample_points.shp', the
         function will export a shapefile/geojson of the sampling
         points to file.
+    class_attr: str
+        Column name of output dataframe that contains the integer 
+        class values on the classification map.
     
     Output
     ------
@@ -55,7 +59,7 @@ def random_sampling(da,
     
     #open the dataset as a pandas dataframe
     da = da.squeeze()
-    df = da.to_dataframe(name='class')
+    df = da.to_dataframe(name=class_attr)
     
     #list to store points
     samples = []
