@@ -54,3 +54,9 @@ notebooks/workshop/dask-worker-space/dask-worker-space/purge.lock
 notebooks/workshop/dask-worker-space/dask-worker-space/worker-3r2rt1uf.dirlock
 notebooks/workshop/dask-worker-space/dask-worker-space/worker-mjdab375.dirlock
 notebooks/workshop/.ipynb_checkpoints/4_Post_Processing-checkpoint.ipynb
+notebooks/workshop_Mozambique/.ipynb_checkpoints/0_Extract_Training_Features-checkpoint.ipynb
+notebooks/workshop_Mozambique/.ipynb_checkpoints/1_Filter_Training_Data-checkpoint.ipynb
+notebooks/workshop_Mozambique/.ipynb_checkpoints/2_Evaluate_Fit_Classifier-checkpoint.ipynb
+notebooks/workshop_Mozambique/.ipynb_checkpoints/3_Land_Cover_Classification-checkpoint.ipynb
+notebooks/workshop_Mozambique/.ipynb_checkpoints/4_Post_Processing-checkpoint.ipynb
+notebooks/workshop_Mozambique/.ipynb_checkpoints/Introduction-checkpoint.ipynb
