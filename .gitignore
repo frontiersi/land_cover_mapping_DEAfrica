@@ -61,3 +61,6 @@ notebooks/workshop_Mozambique/.ipynb_checkpoints/3_Land_Cover_Classification-che
 notebooks/workshop_Mozambique/.ipynb_checkpoints/4_Post_Processing-checkpoint.ipynb
 notebooks/workshop_Mozambique/.ipynb_checkpoints/Introduction-checkpoint.ipynb
 notebooks/workshop_Mozambique/__pycache__/random_sampling.cpython-38.pyc
+notebooks/workshop_Mozambique/dask-worker-space/dask-worker-space/global.lock
+notebooks/workshop_Mozambique/dask-worker-space/dask-worker-space/purge.lock
+notebooks/workshop_Mozambique/dask-worker-space/dask-worker-space/worker-iesc968h.dirlock
