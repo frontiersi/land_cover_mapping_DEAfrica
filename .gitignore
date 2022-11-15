@@ -64,3 +64,7 @@ notebooks/workshop_Mozambique/__pycache__/random_sampling.cpython-38.pyc
 notebooks/workshop_Mozambique/dask-worker-space/dask-worker-space/global.lock
 notebooks/workshop_Mozambique/dask-worker-space/dask-worker-space/purge.lock
 notebooks/workshop_Mozambique/dask-worker-space/dask-worker-space/worker-iesc968h.dirlock
+notebooks/workshop_Rwanda/dask-worker-space/dask-worker-space/global.lock
+notebooks/workshop_Rwanda/dask-worker-space/dask-worker-space/purge.lock
+notebooks/workshop_Rwanda/dask-worker-space/dask-worker-space/worker-sr5ckaiz.dirlock
+notebooks/workshop_Rwanda/.ipynb_checkpoints/3_Land_Cover_Classification-checkpoint.ipynb
