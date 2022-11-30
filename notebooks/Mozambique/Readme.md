@@ -1,3 +1,1 @@
 This folder contains working scripts of national land cover mapping for Mozambique. As the data and processing have not been finalised due to seeking for feedback from stakeholders, the current scripts may be updated.  
-
-The folder contains the following modules:
