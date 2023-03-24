@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 def random_sampling(da,
                     n,
+                    min_sample_n=5,
                     sampling='stratified_random',
                     manual_class_ratios=None,
                     out_fname=None,
@@ -24,6 +25,8 @@ def random_sampling(da,
     n: int
         Total number of points to sample. Ignored if providing
         a dictionary of {class:numofpoints} to 'manual_class_ratios'
+    min_sample_n: int
+        Minimum number of samples to generate per class
     sampling: str
         'stratified_random' = Create points that are randomly 
         distributed within each class, where each class has a
@@ -79,6 +82,8 @@ def random_sampling(da,
         for _class in class_ratio['class']:
             #use relative proportions of classes to sample df
             no_of_points = n * class_ratio[class_ratio['class']==_class]['proportion'].values[0]
+            #If no_of_points is less than the minimum sample number, use minimum sample number instead
+            no_of_points = max(min_sample_n, no_of_points)
             #random sample each class
             print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' coordinates')
             sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
