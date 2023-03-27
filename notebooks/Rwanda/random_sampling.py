@@ -1,11 +1,17 @@
+
+# A function to create stratified randomly sampled points from a classification map.
+# adapted from Chad Burton: https://gist.github.com/cbur24/04760d645aa123a3b1817b07786e7d9f
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 def random_sampling(da,
                     n,
+                    min_sample_n=5,
                     sampling='stratified_random',
                     manual_class_ratios=None,
-                    out_fname=None
+                    out_fname=None,
+                    class_attr='class',
+                    drop_value=0
                    ):
     
     """
@@ -19,6 +25,8 @@ def random_sampling(da,
     n: int
         Total number of points to sample. Ignored if providing
         a dictionary of {class:numofpoints} to 'manual_class_ratios'
+    min_sample_n: int
+        Minimum number of samples to generate per class
     sampling: str
         'stratified_random' = Create points that are randomly 
         distributed within each class, where each class has a
@@ -39,6 +47,11 @@ def random_sampling(da,
         If providing a filepath name, e.g 'sample_points.shp', the
         function will export a shapefile/geojson of the sampling
         points to file.
+    class_attr: str
+        Column name of output dataframe that contains the integer 
+        class values on the classification map.
+    drop_value: integer
+        Pixel value on the classification map to be excluded from sampling.
     
     Output
     ------
@@ -52,34 +65,39 @@ def random_sampling(da,
     
     #open the dataset as a pandas dataframe
     da = da.squeeze()
-    df = da.to_dataframe(name='class')
+    df = da.to_dataframe(name=class_attr)
+    
+    # change made here: drop invalid class value
+    df=df[df[class_attr]!=drop_value]
     
     #list to store points
     samples = []
     
     if sampling == 'stratified_random':
         #determine class ratios in image
-        class_ratio = pd.DataFrame({'proportion': df['class'].value_counts(normalize=True),
-                                    'class':df['class'].value_counts(normalize=True).keys()
+        class_ratio = pd.DataFrame({'proportion': df[class_attr].value_counts(normalize=True),
+                                    'class':df[class_attr].value_counts(normalize=True).keys()
                                  })
         
         for _class in class_ratio['class']:
             #use relative proportions of classes to sample df
             no_of_points = n * class_ratio[class_ratio['class']==_class]['proportion'].values[0]
+            #If no_of_points is less than the minimum sample number, use minimum sample number instead
+            no_of_points = max(min_sample_n, no_of_points)
             #random sample each class
             print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' coordinates')
-            sample_loc = df[df['class'] == _class].sample(n=int(round(no_of_points)))
+            sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
             samples.append(sample_loc)
 
     if sampling == 'equal_stratified_random':
-        classes = np.unique(df['class'])
+        classes = np.unique(df[class_attr])
         
         for _class in classes:
             #use relative proportions of classes to sample df
             no_of_points = n / len(classes)
             #random sample each classes
             try:
-                sample_loc = df[df['class'] == _class].sample(n=int(round(no_of_points)))
+                sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
                 print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' coordinates')
                 samples.append(sample_loc)
             
@@ -97,7 +115,7 @@ def random_sampling(da,
     if sampling == 'manual':
         if isinstance(manual_class_ratios, dict):
             #check classes in dict match classes in data
-            classes = np.unique(df['class'])
+            classes = np.unique(df[class_attr])
             dict_classes = list(manual_class_ratios.keys())
             
             if set(dict_classes).issubset([str(i) for i in classes]):
@@ -110,7 +128,7 @@ def random_sampling(da,
                     no_of_points = manual_class_ratios.get(str(_class))
                     #random sample each class
                     try:
-                        sample_loc = df[df['class'] == _class].sample(n=int(round(no_of_points)))
+                        sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
                         print('Class '+ str(_class)+ ': sampled at '+ str(round(no_of_points)) + ' coordinates')
                         samples.append(sample_loc)
                         
@@ -139,7 +157,7 @@ def random_sampling(da,
     gdf = gpd.GeoDataFrame(
         all_samples,
         #crs=da.crs,
-        crs=da.spatial_ref,
+        crs=da.spatial_ref, # change made here as attribute da.crs may not exist
         geometry=gpd.points_from_xy(x,y)).reset_index()
 
     gdf = gdf.drop(['x', 'y'],axis=1)
