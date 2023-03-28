@@ -73,21 +73,25 @@ def random_sampling(da,
     #list to store points
     samples = []
     
+    #determine class ratios in image
+    class_ratio = pd.DataFrame({'proportion': df[class_attr].value_counts(normalize=True),
+                            'n_available':df[class_attr].value_counts(normalize=False),
+                            'class':df[class_attr].value_counts(normalize=True).keys()
+                         })
     if sampling == 'stratified_random':
-        #determine class ratios in image
-        class_ratio = pd.DataFrame({'proportion': df[class_attr].value_counts(normalize=True),
-                                    'class':df[class_attr].value_counts(normalize=True).keys()
-                                 })
-        
         for _class in class_ratio['class']:
             #use relative proportions of classes to sample df
             no_of_points = n * class_ratio[class_ratio['class']==_class]['proportion'].values[0]
-            #If no_of_points is less than the minimum sample number, use minimum sample number instead
-            no_of_points = max(min_sample_n, no_of_points)
-            #random sample each class
-            print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' coordinates')
-            sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
-            samples.append(sample_loc)
+            n_available=class_ratio[class_ratio['class']==_class]['n_available'].values[0]
+            if n_available>=max([min_sample_n, no_of_points]):
+                no_of_points = max([min_sample_n, no_of_points])
+                #random sample each class
+                print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + 'locations')
+            else:
+                no_of_points=n_available
+                print('Class '+ str(_class)+ ': not enough pixels as requested, sampling at '+str(int(no_of_points))+' locations')
+            sample_loc = df[df[class_attr] == _class].sample(n=int(round(n_available)))
+            samples.append(sample_loc)   
 
     if sampling == 'equal_stratified_random':
         classes = np.unique(df[class_attr])
@@ -95,20 +99,30 @@ def random_sampling(da,
         for _class in classes:
             #use relative proportions of classes to sample df
             no_of_points = n / len(classes)
-            #random sample each classes
-            try:
+            n_available=class_ratio[class_ratio['class']==_class]['n_available'].values[0]
+            if n_available>=no_of_points:
                 sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
-                print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' coordinates')
-                samples.append(sample_loc)
-            
-            except ValueError:
-                        print('Requested more sample points than population of pixels for class '+ str(_class)+', skipping')
-                        pass
-    
+                print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' locations')
+            else:
+                no_of_points=n_available
+                print('Class '+ str(_class)+ ': not enough pixels as requested, sampling at '+str(int(no_of_points))+' locations')
+            sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
+            samples.append(sample_loc)   
+
+#             #random sample each classes
+#             try:
+#                 sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
+#                 print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' locations')
+#                 samples.append(sample_loc)
+
+#             except ValueError:
+#                         print('Requested more sample points than population of pixels for class '+ str(_class)+', skipping')
+#                         pass
+
     if sampling == 'random':
         no_of_points = n
         #random sample entire df
-        print('Randomly sampling dataAraay at '+ str(round(no_of_points)) + ' coordinates')
+        print('Randomly sampling dataAraay at '+ str(round(no_of_points)) + ' locations')
         sample_loc = df.dropna().sample(n=int(round(no_of_points)))
         samples.append(sample_loc)
     
@@ -126,15 +140,23 @@ def random_sampling(da,
                 #run sampling
                 for _class in classes:
                     no_of_points = manual_class_ratios.get(str(_class))
-                    #random sample each class
-                    try:
-                        sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
-                        print('Class '+ str(_class)+ ': sampled at '+ str(round(no_of_points)) + ' coordinates')
-                        samples.append(sample_loc)
-                        
-                    except ValueError:
-                        print('Requested more sample points than population of pixels for class '+ str(_class)+', skipping')
-                        pass
+                    n_available=class_ratio[class_ratio['class']==_class]['n_available'].values[0]
+                    if n_available>=no_of_points:
+                        print('Class '+ str(_class)+ ': sampling at '+ str(round(no_of_points)) + ' locations')
+                    else:
+                        no_of_points=n_available
+                        print('Class '+ str(_class)+ ': not enough pixels as requested, sampling'+str(int(no_of_points))+'locations')
+                    sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
+                    samples.append(sample_loc)  
+
+#                     try:
+#                         sample_loc = df[df[class_attr] == _class].sample(n=int(round(no_of_points)))
+#                         print('Class '+ str(_class)+ ': sampled at '+ str(round(no_of_points)) + ' locations')
+#                         samples.append(sample_loc)
+
+#                     except ValueError:
+#                         print('Requested more sample points than population of pixels for class '+ str(_class)+', skipping')
+#                         pass
 
             else:
                 raise ValueError("Some or all of the classes in 'manual_class_ratio' dictionary do not" +
