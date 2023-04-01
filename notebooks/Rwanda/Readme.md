@@ -1,1 +1,0 @@
-This folder contains working scripts and data for land cover mapping for Rwanda. As the data and processing have not been finalised with ongoing seeking for feedback from stakeholders, the current scripts may be updated.  
