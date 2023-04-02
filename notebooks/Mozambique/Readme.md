@@ -1,1 +1,1 @@
-This folder contains working scripts of national land cover mapping for Mozambique. As the data and processing have not been finalised with ongoing seeking for feedback from stakeholders, the current scripts may be updated.  
+This folder contains working scripts of national land cover mapping for Mozambique. To make sure you are able to run all notebook smoothly, we recommend you run them through a large sandbox instance (e.g. power user instance with 120 GB memory). 
